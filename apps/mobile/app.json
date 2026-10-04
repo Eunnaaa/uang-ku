@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "UangKu",
+    "slug": "uangku",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#0A0B0E"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.uangku.ios",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "UangKu memerlukan Face ID untuk mengamankan data keuangan dan catatan transaksimu dari akses yang tidak berizin."
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      "expo-secure-store",
+      "expo-local-authentication"
+    ],
+    "scheme": "uangku"
+  }
+}
