@@ -21,6 +21,7 @@ export interface AccountModel {
   currency: string;
   initialBalance: number;
   currentBalance?: number;
+  reservedAmount?: number;
   isDefault: boolean;
   isArchived: boolean;
   createdAt: string;
@@ -57,6 +58,7 @@ export interface TransactionModel {
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
+  receiptUrl?: string | null;
   // Joined relation fields for UI convenience
   account?: Pick<AccountModel, 'id' | 'name' | 'type'>;
   destinationAccount?: Pick<AccountModel, 'id' | 'name' | 'type'> | null;
@@ -73,6 +75,59 @@ export interface OutboxMutationModel {
   retryCount: number;
   status: 'pending' | 'syncing' | 'failed';
   lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GoalModel {
+  id: string;
+  userId: string;
+  name: string;
+  emoji?: string | null;
+  targetAmount: number;
+  currentAmount: number;
+  targetDate?: string | null;
+  status: 'active' | 'achieved' | 'archived';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type RecurringFrequency = 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly';
+
+export interface RecurringRuleModel {
+  id: string;
+  userId: string;
+  accountId: string;
+  categoryId?: string | null;
+  type: TransactionType;
+  amount: number;
+  frequency: RecurringFrequency;
+  note?: string | null;
+  nextDueDate: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  accountName?: string;
+  categoryName?: string;
+}
+
+export interface TemplatePayload {
+  amount: number;
+  categoryId?: string | null;
+  accountId: string;
+  destinationAccountId?: string | null;
+  type: TransactionType;
+  note?: string | null;
+  currency: string;
+}
+
+export interface TemplateModel {
+  id: string;
+  userId: string;
+  name: string;
+  templatePayload: TemplatePayload;
+  sortOrder: number;
+  useCount: number;
   createdAt: string;
   updatedAt: string;
 }

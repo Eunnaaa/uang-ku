@@ -13,6 +13,7 @@ export const createTransactionSchema = z.object({
   note: z.string().max(255, 'Catatan maksimal 255 karakter').nullable().optional(),
   transactionDate: z.string().datetime('Format tanggal harus ISO 8601 string'),
   clientId: z.string().uuid('Client ID harus berupa UUID valid'),
+  receiptUrl: z.string().nullable().optional(),
 }).refine((data) => {
   if (data.type === 'transfer') {
     return Boolean(data.destinationAccountId && data.destinationAccountId !== data.accountId);
@@ -40,6 +41,7 @@ export const updateTransactionSchema = z.object({
   transferFee: z.number().int().min(0).optional(),
   currency: z.string().length(3).optional(),
   note: z.string().max(255).nullable().optional(),
+  receiptUrl: z.string().nullable().optional(),
   transactionDate: z.string().datetime().optional(),
   version: z.number().int().positive(),
 });

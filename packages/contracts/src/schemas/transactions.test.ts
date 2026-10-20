@@ -72,4 +72,23 @@ describe('Transaction Schema Validation', () => {
     const floatAmount = { ...zeroAmount, amount: 25000.5 };
     expect(createTransactionSchema.safeParse(floatAmount).success).toBe(false);
   });
+
+  it('validates a transaction with optional receiptUrl (PRD Section 63)', () => {
+    const txWithReceipt = {
+      accountId: '00000000-0000-0000-0000-000000000001',
+      categoryId: '00000000-0000-0000-0000-000000000002',
+      type: 'expense' as const,
+      amount: 45000,
+      currency: 'IDR',
+      note: 'Lunch with receipt',
+      transactionDate: '2026-10-04T12:00:00.000Z',
+      clientId: '00000000-0000-0000-0000-000000000003',
+      receiptUrl: 'file:///data/receipts/rec-123.jpg',
+    };
+    const result = createTransactionSchema.safeParse(txWithReceipt);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.receiptUrl).toBe('file:///data/receipts/rec-123.jpg');
+    }
+  });
 });
