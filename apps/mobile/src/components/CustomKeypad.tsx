@@ -86,7 +86,7 @@ export function CustomKeypad({ value, onChange, onDone }: CustomKeypadProps) {
             <Text style={styles.keyText}>0</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.key, styles.backspaceKey]} activeOpacity={0.6} onPress={handleBackspace}>
-            <Delete color={colors.gold.champagne} size={22} />
+            <Delete color={colors.gold.champagne} size={20} />
           </TouchableOpacity>
         </View>
       </View>
@@ -97,57 +97,57 @@ export function CustomKeypad({ value, onChange, onDone }: CustomKeypadProps) {
 const styles = StyleSheet.create({
   container: {
     width: '100%',
-    paddingHorizontal: 12,
-    paddingBottom: 8,
+    paddingHorizontal: 2,
+    paddingBottom: 6,
   },
   chipsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 14,
+    marginBottom: 12,
     gap: 8,
   },
   chip: {
     flex: 1,
-    paddingVertical: 8,
-    backgroundColor: colors.bg.surface,
-    borderRadius: 20,
+    paddingVertical: 7,
+    backgroundColor: '#141722',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.gold.hairline,
+    borderColor: 'rgba(212, 175, 55, 0.22)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   chipText: {
     color: colors.gold.champagne,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
   },
   grid: {
-    gap: 10,
+    gap: 8,
   },
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 10,
+    gap: 8,
   },
   key: {
     flex: 1,
-    height: 56,
-    backgroundColor: colors.bg.surface,
-    borderRadius: 16,
+    height: 52,
+    backgroundColor: '#141722',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: colors.border.subtle,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   backspaceKey: {
     backgroundColor: 'rgba(212, 175, 55, 0.08)',
-    borderColor: colors.gold.hairline,
+    borderColor: 'rgba(212, 175, 55, 0.2)',
   },
   keyText: {
     color: colors.text.primary,
-    fontSize: 24,
-    fontWeight: '500',
+    fontSize: 22,
+    fontWeight: '600',
     fontVariant: ['tabular-nums'],
   },
 });

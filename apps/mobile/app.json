@@ -5,22 +5,48 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
-    "newArchEnabled": true,
+    "icon": "./assets/icon.png",
     "splash": {
-      "backgroundColor": "#0A0B0E"
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#090A0E"
     },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.uangku.ios",
       "infoPlist": {
-        "NSFaceIDUsageDescription": "UangKu memerlukan Face ID untuk mengamankan data keuangan dan catatan transaksimu dari akses yang tidak berizin."
+        "NSFaceIDUsageDescription": "UangKu memerlukan Face ID untuk mengamankan data keuangan dan catatan transaksimu dari akses yang tidak berizin.",
+        "NSCameraUsageDescription": "UangKu memerlukan akses kamera untuk mengambil foto struk bukti transaksi.",
+        "NSPhotoLibraryUsageDescription": "UangKu memerlukan akses galeri foto untuk melampirkan bukti transaksi."
       }
     },
+    "android": {
+      "package": "com.uangku.android",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#090A0E"
+      },
+      "permissions": [
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT",
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "platforms": [
+      "ios",
+      "android"
+    ],
     "plugins": [
       "expo-router",
       "expo-sqlite",
       "expo-secure-store",
-      "expo-local-authentication"
+      "expo-local-authentication",
+      "expo-notifications",
+      "expo-asset",
+      "expo-font",
+      "expo-image-picker"
     ],
     "scheme": "uangku"
   }

@@ -1,19 +1,24 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { Home, ArrowLeftRight, PieChart, Settings } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from '../../src/theme/colors';
 
 export default function TabLayout() {
+  const insets = useSafeAreaInsets();
+  const bottomPadding = Math.max(insets.bottom, 10);
+  const tabHeight = 54 + bottomPadding;
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: '#0D0F15',
-          borderTopColor: colors.border.subtle,
-          borderTopWidth: 1,
-          height: 64,
-          paddingBottom: 8,
+          backgroundColor: '#0A0C11',
+          borderTopColor: 'rgba(255, 255, 255, 0.07)',
+          borderTopWidth: 0.5,
+          height: tabHeight,
+          paddingBottom: bottomPadding,
           paddingTop: 8,
         },
         tabBarActiveTintColor: colors.gold.champagne,

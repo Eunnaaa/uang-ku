@@ -19,19 +19,19 @@ export const colors = {
     subtle: 'rgba(212, 175, 55, 0.08)',
   },
 
-  // Jewel Accents for Financial Flows
+  // Jewel Accents for Financial Flows (In / Out Cash)
   flow: {
-    income: '#10B981',      // Emerald Green
+    income: '#10B981',      // Vibrant Emerald Green
     incomeBg: 'rgba(16, 185, 129, 0.12)',
-    incomeBorder: 'rgba(16, 185, 129, 0.3)',
+    incomeBorder: 'rgba(16, 185, 129, 0.28)',
 
-    expense: '#F43F5E',     // Ruby Rose
-    expenseBg: 'rgba(244, 63, 94, 0.12)',
-    expenseBorder: 'rgba(244, 63, 94, 0.3)',
+    expense: '#EF4444',     // Vibrant Crimson Red
+    expenseBg: 'rgba(239, 68, 68, 0.12)',
+    expenseBorder: 'rgba(239, 68, 68, 0.28)',
 
     transfer: '#38BDF8',    // Celestial Sapphire
     transferBg: 'rgba(56, 189, 248, 0.12)',
-    transferBorder: 'rgba(56, 189, 248, 0.3)',
+    transferBorder: 'rgba(56, 189, 248, 0.28)',
   },
 
   // High-legibility Typography

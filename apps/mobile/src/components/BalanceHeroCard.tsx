@@ -1,82 +1,160 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { Plus, Repeat, ArrowUpRight, ArrowDownLeft, ShieldCheck } from 'lucide-react-native';
+import { Plus, Repeat, ArrowUpRight, ArrowDownLeft, ShieldCheck, Eye, EyeOff, TrendingUp, TrendingDown } from 'lucide-react-native';
 import { formatRupiah } from '@uangku/contracts';
 import { colors } from '../theme/colors';
-import { hapticMedium, hapticSelection } from '../theme/haptics';
+import { hapticMedium, hapticSelection, hapticLight } from '../theme/haptics';
 
 interface BalanceHeroCardProps {
   totalNetWorth: number;
+  availableNetWorth?: number;
+  totalReserved?: number;
   totalIncome: number;
   totalExpense: number;
   netCashFlow: number;
+  initialMasked?: boolean;
   onPressAdd: () => void;
   onPressTransfer: () => void;
 }
 
 export function BalanceHeroCard({
   totalNetWorth,
+  availableNetWorth,
+  totalReserved = 0,
   totalIncome,
   totalExpense,
   netCashFlow,
+  initialMasked = false,
   onPressAdd,
   onPressTransfer,
 }: BalanceHeroCardProps) {
+  const [isBalanceVisible, setIsBalanceVisible] = useState(!initialMasked);
+
+  React.useEffect(() => {
+    setIsBalanceVisible(!initialMasked);
+  }, [initialMasked]);
+
   const isNetPositive = netCashFlow >= 0;
+  const currentPeriod = new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric' }).format(new Date());
+
+  const effectiveAvailable = availableNetWorth ?? Math.max(0, totalNetWorth - totalReserved);
+
+  const toggleVisibility = () => {
+    hapticLight();
+    setIsBalanceVisible((prev) => !prev);
+  };
 
   return (
     <View style={styles.cardContainer}>
-      {/* Background Glow */}
-      <View style={styles.glowOverlay} />
-
       {/* Header Label */}
       <View style={styles.headerRow}>
         <View style={styles.badge}>
           <ShieldCheck size={12} color={colors.gold.champagne} />
           <Text style={styles.badgeText}>TOTAL KEKAYAAN BERSIH</Text>
         </View>
-        <Text style={styles.periodText}>Oktober 2026</Text>
+        <View style={styles.periodPill}>
+          <Text style={styles.periodText}>{currentPeriod}</Text>
+        </View>
       </View>
 
-      {/* Hero Balance */}
+      {/* Hero Balance with Eye Toggle */}
       <View style={styles.balanceContainer}>
-        <Text style={styles.balanceAmount}>{formatRupiah(totalNetWorth)}</Text>
+        <Text style={styles.balanceAmount}>
+          {isBalanceVisible ? formatRupiah(totalNetWorth) : 'Rp ••••••••••'}
+        </Text>
+        <TouchableOpacity
+          style={styles.eyeBtn}
+          onPress={toggleVisibility}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          {isBalanceVisible ? (
+            <Eye size={19} color={colors.text.muted} />
+          ) : (
+            <EyeOff size={19} color={colors.gold.champagne} />
+          )}
+        </TouchableOpacity>
       </View>
 
-      {/* Monthly Cash Flow Pills */}
-      <View style={styles.flowRow}>
-        <View style={styles.flowItem}>
-          <View style={[styles.flowIconCircle, { backgroundColor: colors.flow.incomeBg }]}>
-            <ArrowDownLeft size={14} color={colors.flow.income} />
-          </View>
-          <View>
-            <Text style={styles.flowLabel}>Pemasukan</Text>
-            <Text style={[styles.flowValue, { color: colors.flow.income }]}>
-              +{formatRupiah(totalIncome)}
+      {/* Available Balance vs Reserved Balance (PRD Section 75) */}
+      {totalReserved > 0 && (
+        <View style={styles.reservedSubRow}>
+          <Text style={styles.reservedSubText}>
+            Tersedia:{' '}
+            <Text style={styles.reservedHighlight}>
+              {isBalanceVisible ? formatRupiah(effectiveAvailable) : '••••••'}
             </Text>
+            {'  '}•{'  '}Disisihkan:{' '}
+            <Text style={styles.reservedMuted}>
+              {isBalanceVisible ? formatRupiah(totalReserved) : '••••••'}
+            </Text>
+          </Text>
+        </View>
+      )}
+
+      {/* Monthly Cash Flow Container */}
+      <View style={styles.flowRow}>
+        <View style={styles.flowCol}>
+          <View style={styles.flowHeaderRow}>
+            <View style={[styles.flowIconCircle, { backgroundColor: colors.flow.incomeBg, borderColor: colors.flow.incomeBorder }]}>
+              <ArrowDownLeft size={11} color={colors.flow.income} />
+            </View>
+            <Text style={styles.flowLabel}>Pemasukan</Text>
           </View>
+          <Text
+            style={[styles.flowValue, { color: colors.flow.income }]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.8}
+          >
+            +{isBalanceVisible ? formatRupiah(totalIncome) : '••••••'}
+          </Text>
         </View>
 
         <View style={styles.flowDivider} />
 
-        <View style={styles.flowItem}>
-          <View style={[styles.flowIconCircle, { backgroundColor: colors.flow.expenseBg }]}>
-            <ArrowUpRight size={14} color={colors.flow.expense} />
-          </View>
-          <View>
+        <View style={[styles.flowCol, styles.flowColRight]}>
+          <View style={styles.flowHeaderRow}>
+            <View style={[styles.flowIconCircle, { backgroundColor: colors.flow.expenseBg, borderColor: colors.flow.expenseBorder }]}>
+              <ArrowUpRight size={11} color={colors.flow.expense} />
+            </View>
             <Text style={styles.flowLabel}>Pengeluaran</Text>
-            <Text style={[styles.flowValue, { color: colors.flow.expense }]}>
-              -{formatRupiah(totalExpense)}
-            </Text>
           </View>
+          <Text
+            style={[styles.flowValue, { color: colors.flow.expense }]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.8}
+          >
+            -{isBalanceVisible ? formatRupiah(totalExpense) : '••••••'}
+          </Text>
         </View>
       </View>
 
-      {/* Net Cash Flow Banner */}
-      <View style={styles.netCashFlowBanner}>
-        <Text style={styles.netCashFlowLabel}>Arus Kas Bersih Bulan Ini</Text>
-        <Text style={[styles.netCashFlowValue, { color: isNetPositive ? colors.flow.income : colors.flow.expense }]}>
-          {isNetPositive ? '+' : ''}{formatRupiah(netCashFlow)}
+      {/* Net Cash Flow Capsule Banner */}
+      <View
+        style={[
+          styles.netCashFlowBanner,
+          {
+            backgroundColor: isNetPositive ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
+            borderColor: isNetPositive ? 'rgba(16, 185, 129, 0.24)' : 'rgba(239, 68, 68, 0.24)',
+          },
+        ]}
+      >
+        <View style={styles.netCashFlowLeft}>
+          {isNetPositive ? (
+            <TrendingUp size={13} color={colors.flow.income} />
+          ) : (
+            <TrendingDown size={13} color={colors.flow.expense} />
+          )}
+          <Text style={styles.netCashFlowLabel}>Arus Kas Bersih Bulan Ini</Text>
+        </View>
+        <Text
+          style={[
+            styles.netCashFlowValue,
+            { color: isNetPositive ? colors.flow.income : colors.flow.expense },
+          ]}
+        >
+          {isNetPositive ? '+' : ''}{isBalanceVisible ? formatRupiah(netCashFlow) : '••••••••'}
         </Text>
       </View>
 
@@ -90,7 +168,7 @@ export function BalanceHeroCard({
             onPressAdd();
           }}
         >
-          <Plus size={18} color={colors.text.inverse} strokeWidth={2.5} />
+          <Plus size={18} color="#090A0E" strokeWidth={2.8} />
           <Text style={styles.primaryBtnText}>Catat Transaksi</Text>
         </TouchableOpacity>
 
@@ -125,15 +203,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginBottom: 20,
   },
-  glowOverlay: {
-    position: 'absolute',
-    top: -50,
-    right: -50,
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    backgroundColor: 'rgba(212, 175, 55, 0.08)',
-  },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -143,26 +212,38 @@ const styles = StyleSheet.create({
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(212, 175, 55, 0.12)',
-    paddingHorizontal: 8,
+    backgroundColor: 'rgba(212, 175, 55, 0.1)',
+    paddingHorizontal: 9,
     paddingVertical: 4,
-    borderRadius: 12,
+    borderRadius: 10,
     gap: 5,
     borderWidth: 0.5,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
+    borderColor: 'rgba(212, 175, 55, 0.25)',
   },
   badgeText: {
     color: colors.gold.champagne,
     fontSize: 10,
     fontWeight: '700',
-    letterSpacing: 0.8,
+    letterSpacing: 0.6,
+  },
+  periodPill: {
+    backgroundColor: 'rgba(212, 175, 55, 0.08)',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 10,
+    borderWidth: 0.5,
+    borderColor: 'rgba(212, 175, 55, 0.2)',
   },
   periodText: {
-    color: colors.text.muted,
-    fontSize: 12,
-    fontWeight: '500',
+    color: colors.gold.champagne,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.4,
   },
   balanceContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginVertical: 10,
   },
   balanceAmount: {
@@ -171,56 +252,110 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: -0.5,
     fontVariant: ['tabular-nums'],
+    flex: 1,
+  },
+  eyeBtn: {
+    padding: 6,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    marginLeft: 8,
+  },
+  reservedSubRow: {
+    backgroundColor: 'rgba(212, 175, 55, 0.08)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    marginBottom: 6,
+    borderWidth: 0.5,
+    borderColor: 'rgba(212, 175, 55, 0.2)',
+  },
+  reservedSubText: {
+    fontSize: 11,
+    color: colors.text.secondary,
+    fontWeight: '500',
+  },
+  reservedHighlight: {
+    color: colors.gold.champagne,
+    fontWeight: '700',
+  },
+  reservedMuted: {
+    color: colors.text.muted,
+    fontWeight: '600',
   },
   flowRow: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(26, 29, 39, 0.8)',
-    borderRadius: 16,
-    padding: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 18,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     alignItems: 'center',
     marginTop: 8,
-    marginBottom: 12,
+    marginBottom: 14,
     borderWidth: 1,
-    borderColor: colors.border.subtle,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
-  flowItem: {
+  flowCol: {
     flex: 1,
+    paddingRight: 14,
+  },
+  flowColRight: {
+    paddingRight: 0,
+    paddingLeft: 14,
+  },
+  flowHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
+    marginBottom: 5,
   },
   flowIconCircle: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   flowLabel: {
     fontSize: 11,
+    fontWeight: '500',
     color: colors.text.muted,
   },
   flowValue: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
+    color: colors.text.primary,
     fontVariant: ['tabular-nums'],
   },
   flowDivider: {
     width: 1,
-    height: 28,
-    backgroundColor: colors.border.subtle,
-    marginHorizontal: 8,
+    height: 32,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
   },
   netCashFlowBanner: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 4,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
     marginBottom: 16,
+  },
+  netCashFlowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   netCashFlowLabel: {
     fontSize: 12,
     color: colors.text.secondary,
+    fontWeight: '500',
   },
   netCashFlowValue: {
     fontSize: 13,
@@ -242,6 +377,10 @@ const styles = StyleSheet.create({
   primaryBtn: {
     flex: 1.6,
     backgroundColor: colors.gold.primary,
+    shadowColor: colors.gold.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
   },
   primaryBtnText: {
     color: '#090A0E',
@@ -251,9 +390,9 @@ const styles = StyleSheet.create({
   },
   secondaryBtn: {
     flex: 1,
-    backgroundColor: colors.bg.surface,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
     borderWidth: 1,
-    borderColor: colors.gold.hairline,
+    borderColor: 'rgba(212, 175, 55, 0.3)',
   },
   secondaryBtnText: {
     color: colors.gold.champagne,

@@ -15,6 +15,7 @@ import {
   TrendingUp,
   Repeat,
   CloudOff,
+  Check,
 } from 'lucide-react-native';
 import { type TransactionModel, formatRupiah } from '@uangku/contracts';
 import { colors } from '../theme/colors';
@@ -22,18 +23,28 @@ import { colors } from '../theme/colors';
 interface TransactionItemProps {
   transaction: TransactionModel;
   onPress?: () => void;
+  onDelete?: () => void;
+  onLongPress?: () => void;
+  isMultiSelectMode?: boolean;
+  isSelected?: boolean;
 }
 
-export function TransactionItem({ transaction, onPress }: TransactionItemProps) {
+export function TransactionItem({
+  transaction,
+  onPress,
+  onDelete,
+  onLongPress,
+  isMultiSelectMode,
+  isSelected,
+}: TransactionItemProps) {
   const isIncome = transaction.type === 'income';
   const isExpense = transaction.type === 'expense';
   const isTransfer = transaction.type === 'transfer';
 
-  // Dynamic icon selector
-  const renderIcon = () => {
+  // Dynamic icon selector matching cash flow color
+  const renderIcon = (color: string) => {
     const iconName = transaction.category?.icon;
-    const size = 18;
-    const color = isIncome ? colors.flow.income : isTransfer ? colors.flow.transfer : colors.flow.expense;
+    const size = 17;
 
     switch (iconName) {
       case 'utensils':
@@ -65,7 +76,24 @@ export function TransactionItem({ transaction, onPress }: TransactionItemProps) 
     }
   };
 
-  const amountColor = isIncome ? colors.flow.income : isTransfer ? colors.flow.transfer : colors.flow.expense;
+  const amountColor = isIncome
+    ? colors.flow.income
+    : isExpense
+    ? colors.flow.expense
+    : colors.flow.transfer;
+
+  const iconColor = amountColor;
+  const iconBg = isIncome
+    ? colors.flow.incomeBg
+    : isExpense
+    ? colors.flow.expenseBg
+    : colors.flow.transferBg;
+  const iconBorder = isIncome
+    ? colors.flow.incomeBorder
+    : isExpense
+    ? colors.flow.expenseBorder
+    : colors.flow.transferBorder;
+
   const prefix = isIncome ? '+' : isExpense ? '-' : '';
 
   const accountLabel = isTransfer
@@ -84,17 +112,20 @@ export function TransactionItem({ transaction, onPress }: TransactionItemProps) 
   });
 
   return (
-    <TouchableOpacity activeOpacity={0.7} onPress={onPress} style={styles.container}>
-      <View
-        style={[
-          styles.iconContainer,
-          {
-            backgroundColor: isIncome ? colors.flow.incomeBg : isTransfer ? colors.flow.transferBg : colors.flow.expenseBg,
-            borderColor: isIncome ? colors.flow.incomeBorder : isTransfer ? colors.flow.transferBorder : colors.flow.expenseBorder,
-          },
-        ]}
-      >
-        {renderIcon()}
+    <TouchableOpacity
+      activeOpacity={0.7}
+      onPress={onPress}
+      onLongPress={onLongPress || onDelete}
+      style={[styles.container, isSelected && styles.containerSelected]}
+    >
+      {isMultiSelectMode && (
+        <View style={[styles.selectCircle, isSelected && styles.selectCircleActive]}>
+          {isSelected && <Check size={11} color="#090A0E" strokeWidth={3} />}
+        </View>
+      )}
+
+      <View style={[styles.iconContainer, { backgroundColor: iconBg, borderColor: iconBorder }]}>
+        {renderIcon(iconColor)}
       </View>
 
       <View style={styles.content}>
@@ -131,19 +162,21 @@ const styles = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    backgroundColor: colors.bg.surface,
-    borderRadius: 16,
-    marginBottom: 8,
+    paddingVertical: 13,
+    paddingHorizontal: 15,
+    backgroundColor: '#12141D',
+    borderRadius: 18,
+    marginBottom: 9,
     borderWidth: 1,
-    borderColor: colors.border.subtle,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   iconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+    width: 42,
+    height: 42,
+    borderRadius: 13,
+    backgroundColor: 'rgba(212, 175, 55, 0.08)',
     borderWidth: 1,
+    borderColor: 'rgba(212, 175, 55, 0.18)',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -204,5 +237,23 @@ const styles = StyleSheet.create({
   dateText: {
     fontSize: 12,
     color: colors.text.muted,
+  },
+  containerSelected: {
+    backgroundColor: 'rgba(212, 175, 55, 0.08)',
+    borderColor: 'rgba(212, 175, 55, 0.35)',
+  },
+  selectCircle: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  selectCircleActive: {
+    backgroundColor: colors.gold.primary,
+    borderColor: colors.gold.primary,
   },
 });
