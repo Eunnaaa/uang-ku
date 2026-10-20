@@ -8,9 +8,9 @@
 
 - **Tema Desain:** *Onyx Obsidian & Royal Champagne Gold* (`#090A0E` dengan aksen `#D4AF37` dan `#E5C378`).
 - **Indikator Finansial:**
-  - Pemasukan: *Emerald Green* (`#10B981`)
-  - Pengeluaran: *Ruby Rose* (`#F43F5E`)
-  - Transfer Antar Akun: *Celestial Sapphire* (`#38BDF8`)
+  - Pemasukan (In Cash): *Emerald Green* (`#10B981`)
+  - Pengeluaran (Out Cash): *Crimson Red* (`#EF4444`)
+  - Transfer Antar Akun: *Celestial Slate & Gold* (`#6366F1` / `#D4AF37`)
 - **Keypad Cepat Kustom:** In-app numeric keypad dengan format Rupiah real-time (`Rp 50.000`), chip nominal cepat (`+10rb`, `+50rb`, `+100rb`, `+500rb`), dan tactile haptic feedback.
 - **Haptic Engine:** Umpan balik getaran fisik via `expo-haptics` (light tap untuk angka, selection untuk kategori, medium untuk simpan, notifikasi sukses/error).
 - **Kepatuhan Privasi Apple App Store:**

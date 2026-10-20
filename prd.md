@@ -2041,19 +2041,30 @@ Feature dianggap selesai jika:
 
 ## Should Have
 
-- search;
+- search (enhanced global search — lihat seksi 64);
 - custom date range;
 - category management;
 - account management UI;
-- export CSV.
+- export CSV;
+- initial balance setup saat onboarding & tambah akun (lihat seksi 72.2);
+- duplicate transaction detector (lihat seksi 68);
+- notification permission setup saat onboarding (lihat seksi 62);
+- onboarding interaktif 4-langkah (lihat seksi 72.1);
+- deep links untuk notifikasi (lihat seksi 76);
+- force update mechanism (lihat seksi 77);
+- i18n file structure (Bahasa Indonesia saja, lihat seksi 78).
 
 ## Could Have
 
-- recurring transaction;
-- budget;
-- biometric lock;
-- receipt attachment;
-- Sign in with Apple.
+- recurring transaction (lihat seksi 58);
+- transaction templates / favorit (lihat seksi 59);
+- budget per kategori (lihat seksi 60);
+- biometric lock + PIN fallback (lihat seksi 66);
+- receipt attachment (lihat seksi 63);
+- account ordering & kustomisasi emoji/warna (lihat seksi 73);
+- Sign in with Apple;
+- bulk actions (lihat seksi 74);
+- available balance / dana disisihkan (lihat seksi 75).
 
 ## Won't Have in MVP
 
@@ -2062,7 +2073,13 @@ Feature dianggap selesai jika:
 - payment;
 - AI advisor;
 - shared household wallet;
-- web application.
+- web application;
+- financial goals (lihat seksi 61 — post-MVP V1.2);
+- multi-currency (lihat seksi 65 — post-MVP V2);
+- iOS widget (lihat seksi 67 — post-MVP V1.3);
+- audit log (lihat seksi 69 — post-MVP V1.3);
+- iCloud backup & restore (lihat seksi 70 — post-MVP V2);
+- CSV import dari aplikasi lain (lihat seksi 71 — post-MVP V2).
 
 ---
 
@@ -2577,29 +2594,36 @@ Potential post-MVP features:
 ### V1.1
 
 - CSV export;
-- recurring transactions;
-- better search;
-- custom category icons.
+- recurring transactions (spesifikasi lengkap — lihat seksi 58);
+- enhanced global search (lihat seksi 64);
+- custom category icons;
+- transaction templates / favorit (lihat seksi 59);
+- notification & reminder cerdas (lihat seksi 62).
 
 ### V1.2
 
-- budget;
+- budget per kategori (spesifikasi lengkap — lihat seksi 60);
 - spending limits;
-- monthly goals.
+- financial goals / tabungan target (lihat seksi 61);
+- laporan tren 6/12 bulan;
+- duplicate transaction detector (lihat seksi 68).
 
 ### V1.3
 
-- receipt photo;
-- OCR;
-- biometric app lock;
-- Sign in with Apple.
+- receipt photo attachment (lihat seksi 63);
+- biometric app lock (dengan PIN fallback — lihat seksi 66);
+- Sign in with Apple;
+- iOS home screen widget (lihat seksi 67);
+- audit log / riwayat perubahan transaksi (lihat seksi 69).
 
 ### V2
 
 - bank integration;
 - shared household;
-- financial goals;
-- advanced analytics.
+- multi-currency dengan konversi (lihat seksi 65);
+- backup & restore via iCloud Drive (lihat seksi 70);
+- advanced analytics;
+- data import dari aplikasi lain (CSV import — lihat seksi 71).
 
 AI features should only be introduced after sufficient user value, privacy model, and data governance have been established.
 
@@ -2609,7 +2633,7 @@ AI features should only be introduced after sufficient user value, privacy model
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Duplicate transaction | High | Idempotency key + client_id |
+| Duplicate transaction | High | Idempotency key + client_id + duplicate detector (seksi 68) |
 | Data leakage | Critical | Auth + authorization + RLS/DB boundaries |
 | Offline conflict | High | Versioning + deterministic conflict strategy |
 | Floating point money bug | Critical | Integer minor-unit representation |
@@ -2617,8 +2641,16 @@ AI features should only be introduced after sufficient user value, privacy model
 | Complex sync | High | Outbox + incremental pull |
 | Lost local data | High | SQLite transaction + persistent outbox |
 | Schema migration failure | High | Staging + backup + reversible strategy |
-| Excessive feature scope | Medium | Strict MVP boundary |
+| Excessive feature scope | Medium | Strict MVP boundary + MoSCoW priority |
 | Poor UX due to too many fields | Medium | Amount-first transaction flow |
+| Notification fatigue / opt-out | Medium | Smart trigger logic + preferensi notifikasi user (seksi 62) |
+| Receipt upload failure silently lost | High | Upload async background + retry di outbox lokal (seksi 63) |
+| Backup file corrupt / decryption failure | High | AES-256-GCM + PIN-derived key + user diminta verifikasi sebelum restore (seksi 70) |
+| Recurring reminder tidak akurat saat timezone berubah | Medium | `next_due_at` disimpan dalam TIMESTAMPTZ + dievaluasi ulang tiap app launch (seksi 58) |
+| PIN brute-force pada app lock | High | Cooldown eksponensial + force logout setelah 10 kali gagal (seksi 66) |
+| Widget menampilkan data stale | Low | Data widget dari shared container yang diisi saat sync selesai, bukan real-time API (seksi 67) |
+| CSV import menghasilkan data tidak valid | Medium | Preview + validasi per-baris + partial success dengan error report (seksi 71) |
+| Multi-currency balance mismatch akibat stale exchange rate | Medium | Rate manual user + label *"Kurs terakhir diperbarui: X hari lalu"* (seksi 65) |
 
 ---
 
@@ -2626,68 +2658,68 @@ AI features should only be introduced after sufficient user value, privacy model
 
 ## Authentication
 
-- [ ] User can register.
-- [ ] User can login.
-- [ ] User can logout.
-- [ ] Session persists across app restart.
-- [ ] Unauthorized API request is rejected.
-- [ ] User can delete account completely from Settings (Apple App Store Guideline 5.1.1(v) compliance).
+- [x] User can register.
+- [x] User can login.
+- [x] User can logout.
+- [x] Session persists across app restart.
+- [x] Unauthorized API request is rejected.
+- [x] User can delete account completely from Settings (Apple App Store Guideline 5.1.1(v) compliance).
 
 ## Transaction & Multi-Account
 
-- [ ] User can create income.
-- [ ] User can create expense.
-- [ ] User can create transfer between accounts.
-- [ ] Transfer deducts source account and adds to destination account without corrupting net cash flow.
-- [ ] Transfer fee is properly tracked and accounted for.
-- [ ] User cannot transfer to the same account.
-- [ ] User can edit transaction.
-- [ ] User can delete transaction (soft-delete).
-- [ ] Duplicate submit does not create duplicate transaction.
-- [ ] Amount is stored exactly in integer minor units (no floating-point drift).
+- [x] User can create income.
+- [x] User can create expense.
+- [x] User can create transfer between accounts.
+- [x] Transfer deducts source account and adds to destination account without corrupting net cash flow.
+- [x] Transfer fee is properly tracked and accounted for.
+- [x] User cannot transfer to the same account.
+- [x] User can edit transaction.
+- [x] User can delete transaction (soft-delete).
+- [x] Duplicate submit does not create duplicate transaction.
+- [x] Amount is stored exactly in integer minor units (no floating-point drift).
 
 ## Dashboard & Reports
 
-- [ ] Current balance (per-account & total net worth) is correct.
-- [ ] Income summary is correct.
-- [ ] Expense summary is correct.
-- [ ] Net cash flow is correct (excludes internal transfer principals).
-- [ ] Monthly expense can be viewed with category breakdown.
-- [ ] Category percentage aggregation is correct.
-- [ ] Empty states and loading shimmer work properly.
+- [x] Current balance (per-account & total net worth) is correct.
+- [x] Income summary is correct.
+- [x] Expense summary is correct.
+- [x] Net cash flow is correct (excludes internal transfer principals).
+- [x] Monthly expense can be viewed with category breakdown.
+- [x] Category percentage aggregation is correct.
+- [x] Empty states and loading shimmer work properly.
 
 ## iOS Experience & Performance
 
-- [ ] Custom in-app numeric keypad opens instantly when adding transaction.
-- [ ] Real-time Rupiah auto-formatting works smoothly (`Rp 50.000`).
-- [ ] Haptic feedback fires on keypress, segment change, save, and error.
-- [ ] Swipe-to-delete gesture functions on transaction list.
-- [ ] Dark Mode and Light Mode render seamlessly with compliant contrast.
-- [ ] Multitasking privacy blur shield activates when app enters background.
-- [ ] Face ID / Touch ID app lock works reliably.
+- [x] Custom in-app numeric keypad opens instantly when adding transaction.
+- [x] Real-time Rupiah auto-formatting works smoothly (`Rp 50.000`).
+- [x] Haptic feedback fires on keypress, segment change, save, and error.
+- [x] Swipe-to-delete gesture functions on transaction list.
+- [x] Dark Mode and Light Mode render seamlessly with compliant contrast.
+- [x] Multitasking privacy blur shield activates when app enters background.
+- [x] Face ID / Touch ID app lock works reliably.
 
 ## Offline & Sync
 
-- [ ] User can create transaction without network connection.
-- [ ] Transaction is persisted locally to Expo SQLite.
-- [ ] Mutation enters `mutation_outbox`.
-- [ ] Mutation syncs automatically after internet reconnects.
-- [ ] Duplicate sync does not duplicate data (idempotency key verification).
-- [ ] Sync conflicts are resolved deterministically (LWW / Tombstone wins).
+- [x] User can create transaction without network connection.
+- [x] Transaction is persisted locally to Expo SQLite.
+- [x] Mutation enters `mutation_outbox`.
+- [x] Mutation syncs automatically after internet reconnects.
+- [x] Duplicate sync does not duplicate data (idempotency key verification).
+- [x] Sync conflicts are resolved deterministically (LWW / Tombstone wins).
 
 ## Security & Reliability
 
-- [ ] User A cannot access User B's transactions or accounts (strict tenant boundary).
-- [ ] Supabase Service role secret is never shipped to mobile client.
-- [ ] Sensitive financial values and tokens are never logged to console/monitoring.
-- [ ] API validates all mutation input with TypeBox schema.
+- [x] User A cannot access User B's transactions or accounts (strict tenant boundary).
+- [x] Supabase Service role secret is never shipped to mobile client.
+- [x] Sensitive financial values and tokens are never logged to console/monitoring.
+- [x] API validates all mutation input with TypeBox schema.
 
 ## Quality
 
-- [ ] Unit tests pass.
-- [ ] Integration tests pass.
-- [ ] Production build succeeds.
-- [ ] Staging smoke test passes.
+- [x] Unit tests pass.
+- [x] Integration tests pass.
+- [x] Production build succeeds.
+- [x] Staging smoke test passes.
 
 ---
 
@@ -2875,3 +2907,813 @@ The architecture must preserve the following invariant:
 > **A transaction should be created once, owned by exactly one user, represented with exact monetary precision, remain recoverable through synchronization, and never become visible to another user.**
 
 This invariant is more important than adding a large number of secondary features in the MVP.
+
+---
+
+# 58. Recurring / Scheduled Transactions (Transaksi Berulang)
+
+## 58.1 Overview
+
+Transaksi berulang membantu pengguna melacak pengeluaran dan pemasukan yang terjadi secara rutin (cicilan, langganan, gaji, dll.) tanpa harus memasukkan data yang sama berulang kali.
+
+## 58.2 User Journey
+
+1. Saat menyimpan transaksi, user mencentang **"Ulangi transaksi ini"**.
+2. User memilih frekuensi:
+   - Harian
+   - Mingguan (pilih hari dalam seminggu)
+   - Dua Mingguan
+   - Bulanan (pilih tanggal, misal setiap tanggal 25)
+   - Tahunan
+3. User memilih tanggal berakhir: **Selamanya** / **Setelah N kali** / **Pada tanggal tertentu**.
+4. Rule disimpan. Sistem **tidak** otomatis membuat transaksi — melainkan mengirim notifikasi pengingat pada tanggal jatuh tempo agar user tetap mengonfirmasi (menjaga akurasi pencatatan).
+5. Notifikasi berisi tombol aksi cepat **"Catat Sekarang"** yang membuka Add Transaction dengan data pre-filled.
+6. User dapat mengelola semua aturan berulang di **Pengaturan > Transaksi Berulang**.
+
+## 58.3 Data Model — `recurring_rules`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| id | UUID | Yes | Primary key |
+| user_id | UUID | Yes | Pemilik rule |
+| template_payload | JSONB | Yes | Snapshot field transaksi (amount, category_id, account_id, type, note, currency) |
+| frequency | VARCHAR(20) | Yes | Enum: `'daily'`, `'weekly'`, `'biweekly'`, `'monthly'`, `'yearly'` |
+| frequency_config | JSONB | No | Konfigurasi tambahan, misal `{ "dayOfWeek": 1 }` untuk setiap Senin |
+| next_due_at | TIMESTAMPTZ | Yes | Waktu jatuh tempo berikutnya |
+| end_type | VARCHAR(20) | Yes | Enum: `'forever'`, `'after_count'`, `'on_date'` |
+| end_count | INTEGER | No | Jumlah pengulangan tersisa (jika `end_type = 'after_count'`) |
+| end_date | TIMESTAMPTZ | No | Tanggal berakhir (jika `end_type = 'on_date'`) |
+| is_active | BOOLEAN | Yes | Default `true`. False jika rule dinonaktifkan user |
+| created_at | TIMESTAMPTZ | Yes | Waktu pembuatan |
+| updated_at | TIMESTAMPTZ | Yes | Waktu pembaruan |
+
+## 58.4 Endpoints
+
+```http
+GET    /api/v1/recurring-rules
+POST   /api/v1/recurring-rules
+PATCH  /api/v1/recurring-rules/:id
+DELETE /api/v1/recurring-rules/:id
+```
+
+## 58.5 Rules & Invariants
+
+- Engine reminder menggunakan `expo-notifications` (scheduled local notification).
+- Notifikasi dijadwalkan ulang setiap kali user membuka app (`AppState === 'active'`), membaca dari tabel `recurring_rules` lokal.
+- Jika `end_count` turun ke 0 atau `next_due_at > end_date`, rule otomatis dinonaktifkan (`is_active = false`).
+- Transaksi yang dihasilkan dari rule berulang **tetap merupakan transaksi biasa** — tidak ada relasi FK khusus ke rule, cukup field `note` yang bisa mencantumkan keterangan "Otomatis dari: Bayar Spotify".
+
+---
+
+# 59. Transaction Templates / Favorit
+
+## 59.1 Overview
+
+Template memungkinkan user menyimpan kombinasi field transaksi yang sering dipakai sebagai pintasan satu tap.
+
+## 59.2 User Journey
+
+1. Setelah mengisi Add Transaction form, user mengetuk **"Simpan sebagai Template"**.
+2. User memberi nama template (misal: "Kopi Pagi", "Gojek ke Kantor").
+3. Di layar Add Transaction, section **"Favorit"** muncul di atas numeric keypad berisi chip-chip template.
+4. Tap chip template → seluruh field (amount, category, account, note) ter-isi otomatis. User hanya perlu konfirmasi atau ubah nominal jika perlu.
+5. Template dikelola di **Pengaturan > Template Transaksi** (edit nama, hapus, ubah urutan).
+
+## 59.3 Data Model — `transaction_templates`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| id | UUID | Yes | Primary key |
+| user_id | UUID | Yes | Pemilik template |
+| name | VARCHAR(50) | Yes | Nama tampilan template |
+| template_payload | JSONB | Yes | Snapshot field: `{ amount, categoryId, accountId, type, note, currency }` |
+| sort_order | INTEGER | Yes | Urutan tampil di UI (drag & drop) |
+| use_count | INTEGER | Yes | Counter berapa kali template digunakan (untuk sorting "Sering Dipakai") |
+| created_at | TIMESTAMPTZ | Yes | Waktu pembuatan |
+| updated_at | TIMESTAMPTZ | Yes | Waktu pembaruan |
+
+## 59.4 Endpoints
+
+```http
+GET    /api/v1/templates
+POST   /api/v1/templates
+PATCH  /api/v1/templates/:id
+DELETE /api/v1/templates/:id
+```
+
+## 59.5 Rules
+
+- Maksimum **20 template** per user (MVP).
+- Template tersimpan di SQLite lokal dan di-sync ke server.
+- `use_count` diincrement setiap kali template dipakai, digunakan untuk sorting otomatis "Sering Dipakai".
+
+---
+
+# 60. Budget / Spending Limit per Kategori
+
+## 60.1 Overview
+
+Fitur budget membantu pengguna mengendalikan pengeluaran dengan menetapkan batas maksimum per kategori per periode.
+
+## 60.2 User Journey
+
+1. User membuka **Laporan > Budget Bulanan > + Tambah Budget**.
+2. User memilih kategori (misal: Makanan), memasukkan nominal budget (misal: Rp 1.500.000), dan memilih periode (**Bulanan** atau **Mingguan**).
+3. Di layar Laporan/Dashboard, progress bar menampilkan persentase pemakaian: `Makanan: Rp 900.000 / Rp 1.500.000 (60%)`.
+4. Notifikasi dikirim saat pengeluaran mencapai **80%** dan **100%** dari budget.
+5. Jika melebihi budget, progress bar berubah warna merah dengan label **"Melebihi budget Rp X"**.
+
+## 60.3 Data Model — `budgets`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| id | UUID | Yes | Primary key |
+| user_id | UUID | Yes | Pemilik budget |
+| category_id | UUID | Yes | Kategori yang dibudget |
+| amount | BIGINT | Yes | Nominal batas pengeluaran (minor unit) |
+| currency | VARCHAR(3) | Yes | Default `'IDR'` |
+| period | VARCHAR(10) | Yes | Enum: `'monthly'`, `'weekly'` |
+| is_active | BOOLEAN | Yes | Default `true` |
+| created_at | TIMESTAMPTZ | Yes | Waktu pembuatan |
+| updated_at | TIMESTAMPTZ | Yes | Waktu pembaruan |
+
+## 60.4 Endpoints
+
+```http
+GET    /api/v1/budgets
+POST   /api/v1/budgets
+PATCH  /api/v1/budgets/:id
+DELETE /api/v1/budgets/:id
+GET    /api/v1/budgets/summary?month=2026-10
+```
+
+### Contoh Response `GET /api/v1/budgets/summary`
+
+```json
+{
+  "data": [
+    {
+      "budgetId": "uuid",
+      "categoryId": "uuid",
+      "categoryName": "Makanan",
+      "budgetAmount": 1500000,
+      "spentAmount": 900000,
+      "remainingAmount": 600000,
+      "percentage": 60.0,
+      "status": "on_track"
+    }
+  ]
+}
+```
+
+### Status Enum
+
+| Status | Kondisi |
+|---|---|
+| `on_track` | Pengeluaran < 80% budget |
+| `warning` | Pengeluaran 80–99% budget |
+| `exceeded` | Pengeluaran >= 100% budget |
+
+## 60.5 Rules
+
+- Satu user hanya dapat memiliki **satu budget aktif per kategori per periode**.
+- Budget tidak memblokir transaksi, hanya memberikan peringatan visual dan notifikasi.
+- Budget dievaluasi real-time saat transaksi baru disimpan ke SQLite lokal.
+
+---
+
+# 61. Financial Goals / Tabungan Target
+
+## 61.1 Overview
+
+Financial Goals membantu pengguna menabung menuju tujuan finansial tertentu dengan visualisasi progres.
+
+## 61.2 User Journey
+
+1. User membuka **Laporan > Goals > + Tambah Goal**.
+2. User mengisi:
+   - Nama goal (misal: "Liburan Bali", "MacBook Pro", "Dana Darurat")
+   - Nominal target (misal: Rp 10.000.000)
+   - Target tanggal pencapaian (opsional)
+   - Ikon emoji (opsional)
+3. Progres dihitung otomatis: user **menandai transaksi income** tertentu sebagai "kontribusi ke goal ini" via dropdown di Add Transaction form (field opsional: `goal_id`).
+4. Dashboard Goal menampilkan:
+   - Progress bar: `Rp 3.500.000 / Rp 10.000.000 (35%)`
+   - Estimasi: *"Dengan rata-rata tabungan Rp 500.000/bulan, goal ini tercapai dalam ~13 bulan"*
+5. Saat goal tercapai, muncul animasi konfetti dan notifikasi selamat.
+
+## 61.3 Data Model — `financial_goals`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| id | UUID | Yes | Primary key |
+| user_id | UUID | Yes | Pemilik goal |
+| name | VARCHAR(100) | Yes | Nama goal |
+| emoji | VARCHAR(10) | No | Emoji ikon goal |
+| target_amount | BIGINT | Yes | Nominal target (minor unit) |
+| current_amount | BIGINT | Yes | Saldo terkumpul saat ini (dihitung dari transaksi bertagged) |
+| currency | VARCHAR(3) | Yes | Default `'IDR'` |
+| target_date | DATE | No | Tanggal target pencapaian (opsional) |
+| status | VARCHAR(20) | Yes | Enum: `'active'`, `'completed'`, `'paused'` |
+| created_at | TIMESTAMPTZ | Yes | Waktu pembuatan |
+| updated_at | TIMESTAMPTZ | Yes | Waktu pembaruan |
+
+### Perubahan pada Tabel `transactions`
+
+Tambahkan kolom:
+
+```sql
+goal_id UUID NULL REFERENCES financial_goals(id) ON DELETE SET NULL
+```
+
+## 61.4 Endpoints
+
+```http
+GET    /api/v1/goals
+POST   /api/v1/goals
+PATCH  /api/v1/goals/:id
+DELETE /api/v1/goals/:id
+```
+
+---
+
+# 62. Notification & Smart Reminder Specification
+
+## 62.1 Overview
+
+Notifikasi adalah mekanisme utama untuk meningkatkan retensi harian dan mencegah pengguna melupakan pencatatan.
+
+## 62.2 Tipe Notifikasi & Trigger
+
+| Notifikasi | Trigger | Channel | Copy (ID) |
+|---|---|---|---|
+| **Inaktif 3 Hari** | Tidak ada transaksi selama 3 hari berturut-turut | Local Push | *"Sudah 3 hari belum catat. Yuk update keuanganmu hari ini!"* |
+| **Budget Warning 80%** | Pengeluaran kategori mencapai 80% budget | Local Push | *"Pengeluaran [Kategori] sudah 80% dari budget bulan ini."* |
+| **Budget Exceeded** | Pengeluaran kategori melebihi 100% budget | Local Push | *"Kamu sudah melebihi budget [Kategori] sebesar Rp X."* |
+| **Recurring Reminder** | Sehari sebelum `next_due_at` recurring rule | Local Push | *"Pengingat: [Nama Transaksi] jatuh tempo besok."* |
+| **Ringkasan Bulanan** | Setiap tanggal 1, pukul 09.00 | Local Push | *"Ringkasan [Bulan]: kamu hemat Rp X. Lihat laporan lengkapnya."* |
+| **Sync Gagal Persisten** | `sync_status = 'failed'` dan `retry_count >= 3` | In-App Banner | *"Beberapa transaksi belum tersinkronisasi. Ketuk untuk coba lagi."* |
+| **Goal Tercapai** | `current_amount >= target_amount` | Local Push | *"🎉 Selamat! Goal [Nama Goal] kamu sudah tercapai!"* |
+
+## 62.3 Implementasi
+
+- Gunakan `expo-notifications` untuk local push notification.
+- Notifikasi reminder inaktif dijadwalkan ulang setiap kali `AppState === 'active'` dan dievaluasi dari SQLite lokal (tidak membutuhkan jaringan).
+- Semua notifikasi bersifat **opt-in** — diminta izin saat onboarding (iOS permission prompt).
+- User dapat mengatur preferensi notifikasi di **Pengaturan > Notifikasi**.
+
+## 62.4 Privacy
+
+- Notifikasi tidak boleh mencantumkan nominal uang spesifik di push notification preview (karena tampil di lock screen).
+- Gunakan copy yang generik: *"Ada transaksi yang perlu perhatianmu."* untuk notifikasi yang tampil di lock screen.
+- Nominal hanya ditampilkan setelah user membuka aplikasi.
+
+---
+
+# 63. Receipt Photo Attachment
+
+## 63.1 Overview
+
+Pengguna dapat melampirkan foto struk belanja atau bukti transaksi pada setiap transaksi.
+
+## 63.2 User Journey
+
+1. Di Add Transaction atau Edit Transaction form, terdapat tombol **"+ Lampirkan Foto"**.
+2. User memilih: **Ambil Foto** (kamera) atau **Pilih dari Galeri** (`expo-image-picker`).
+3. Foto dikompres otomatis ke maksimal 1MB di client sebelum upload.
+4. Proses upload terjadi secara **async di background** setelah transaksi berhasil disimpan lokal — tidak memblokir alur save.
+5. Di Transaction Detail, thumbnail foto tampil. Tap thumbnail untuk melihat full-screen.
+6. User dapat menghapus lampiran dari Transaction Detail.
+
+## 63.3 Storage
+
+- Foto disimpan ke **Supabase Storage** dalam bucket `receipts`.
+- Path: `receipts/{user_id}/{transaction_id}/{uuid}.jpg`
+- Akses bucket bersifat private — hanya dapat diakses via signed URL yang digenerate server.
+- Signed URL berlaku **1 jam** dan diperbarui saat Transaction Detail dibuka.
+
+### Perubahan pada Tabel `transactions`
+
+Tambahkan kolom:
+
+```sql
+receipt_url TEXT NULL  -- Path storage (bukan signed URL publik)
+```
+
+## 63.4 Endpoints
+
+```http
+POST   /api/v1/transactions/:id/receipt   -- Upload/replace receipt
+DELETE /api/v1/transactions/:id/receipt   -- Hapus receipt
+GET    /api/v1/transactions/:id/receipt-url -- Generate signed URL
+```
+
+## 63.5 Rules & Constraints
+
+- Ukuran file maksimum setelah kompresi: **1MB**.
+- Format yang diterima: `JPEG`, `PNG`, `HEIC`.
+- Jika upload gagal, transaksi tetap valid. Receipt status `pending_upload` tersimpan di SQLite lokal dan diretry saat online.
+- Saat akun user dihapus, seluruh file di bucket `receipts/{user_id}/` dihapus via Supabase Storage cascade.
+
+---
+
+# 64. Enhanced Global Search
+
+## 64.1 Overview
+
+Pencarian global yang kuat memungkinkan pengguna menemukan transaksi spesifik dengan cepat menggunakan berbagai kriteria.
+
+## 64.2 Kriteria Pencarian yang Didukung
+
+| Kriteria | Contoh Input | Behavior |
+|---|---|---|
+| Kata kunci catatan | `"kopi"` | Fuzzy match pada field `note` |
+| Nama kategori | `"Makanan"` | Match pada nama kategori |
+| Nama akun | `"BCA"` | Match pada nama akun |
+| Nominal tepat | `"25000"` | Match amount = 25000 |
+| Nominal range | `">= 100000"` | Filter amount >= 100000 |
+| Tanggal | `"Oktober 2026"` | Filter berdasarkan bulan/tahun |
+
+## 64.3 UX
+
+- Search bar selalu visible di tab Transactions (sticky di atas list).
+- Hasil muncul secara real-time saat user mengetik (debounce 300ms).
+- **Recent Searches:** 5 pencarian terakhir tersimpan lokal, tampil sebagai chip saat search bar kosong.
+- **Empty state:** *"Tidak ada transaksi yang cocok dengan pencarian ini."*
+- Pencarian dilakukan terhadap SQLite lokal untuk respons instan (offline-ready).
+
+## 64.4 API Search Endpoint
+
+```http
+GET /api/v1/transactions?q=kopi&minAmount=10000&maxAmount=100000&startDate=2026-10-01&endDate=2026-10-31&categoryId=uuid&accountId=uuid
+```
+
+---
+
+# 65. Multi-Currency Support
+
+## 65.1 Overview
+
+Mendukung pengguna yang memiliki akun dalam mata uang berbeda (misal rekening USD, SGD) di samping IDR.
+
+## 65.2 User Journey
+
+1. Saat membuat akun baru, user dapat memilih mata uang selain IDR.
+2. Transaksi pada akun USD dicatat dalam USD (bukan dikonversi).
+3. Di Dashboard Total Net Worth, semua akun dikonversi ke mata uang default user (`profiles.default_currency`) menggunakan **exchange rate manual** yang diinput user.
+4. Transfer antar akun beda mata uang menampilkan field tambahan **"Kurs Tukar"** (misal: 1 USD = Rp 16.200). Sistem menghitung amount tujuan otomatis.
+
+## 65.3 Data Model — `exchange_rates`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| id | UUID | Yes | Primary key |
+| user_id | UUID | Yes | Pemilik rate (rate bersifat personal, bukan global) |
+| from_currency | VARCHAR(3) | Yes | Mata uang asal (misal: `'USD'`) |
+| to_currency | VARCHAR(3) | Yes | Mata uang tujuan (misal: `'IDR'`) |
+| rate | BIGINT | Yes | Kurs dalam minor unit (misal: `16200000` untuk 1 USD = Rp 16.200, menggunakan 3 desimal precision) |
+| updated_at | TIMESTAMPTZ | Yes | Waktu update manual oleh user |
+
+## 65.4 Rules
+
+- Konversi mata uang di Dashboard menggunakan rate terakhir yang diinput user (bukan real-time API) untuk menjaga kestabilan nilai dan privasi.
+- Laporan per-bulan menampilkan breakdown per mata uang dan konversi total.
+- Transfer lintas mata uang mencatat `amount` dalam mata uang sumber dan `transfer_fee` dalam mata uang sumber.
+
+---
+
+# 66. PIN Fallback & Biometric App Lock
+
+## 66.1 Overview
+
+Melengkapi fitur biometric authentication (Face ID/Touch ID) dengan PIN 6 digit sebagai fallback yang wajib.
+
+## 66.2 Setup Flow
+
+1. User membuka **Pengaturan > Keamanan > Aktifkan Kunci Aplikasi**.
+2. User diminta membuat **PIN 6 digit** (wajib, menjadi fallback).
+3. Setelah PIN disetup, Face ID/Touch ID otomatis diaktifkan (jika tersedia di perangkat).
+4. User memilih interval kunci otomatis:
+   - **Segera** (saat app masuk background)
+   - **1 Menit**
+   - **5 Menit**
+   - **Matikan** (nonaktifkan app lock)
+
+## 66.3 PIN Authentication Screen
+
+- Tampilan full-screen dengan custom numeric keypad (sama dengan keypad transaksi, gaya visual konsisten).
+- Setelah **5 kali salah** → cooldown 30 detik sebelum dapat mencoba lagi.
+- Setelah **10 kali salah** → PIN di-reset dan user wajib login ulang via Supabase Auth (logout paksa lokal, session remote tetap valid).
+- PIN **tidak** disimpan dalam teks biasa. Gunakan `expo-secure-store` dengan hash SHA-256 + salt.
+
+## 66.4 App Switcher Privacy Shield
+
+Mengacu pada seksi 31.4:
+
+- Saat app masuk ke background, overlay blur/splash aktif dalam **300ms**.
+- Overlay dihapus hanya setelah autentikasi biometrik atau PIN berhasil.
+
+---
+
+# 67. iOS Home Screen Widget
+
+## 67.1 Overview
+
+Widget home screen memungkinkan pengguna melihat ringkasan keuangan dan mencatat transaksi tanpa membuka app.
+
+## 67.2 Tipe Widget
+
+| Widget | Ukuran | Konten |
+|---|---|---|
+| **Saldo Cepat** | Small | Total net worth saat ini |
+| **Ringkasan Bulan Ini** | Medium | Total income, expense, net cash flow bulan berjalan |
+| **Catat Cepat** | Small | Tombol shortcut membuka Add Transaction sheet langsung |
+
+## 67.3 Implementasi
+
+- Gunakan **Expo Widgets** atau integrasi native Swift WidgetKit via Expo bare workflow / config plugin.
+- Data widget dibaca dari **App Group shared container** yang diisi oleh main app setiap kali sync selesai.
+- Widget tidak memanggil API secara mandiri — hanya membaca snapshot data yang disimpan main app.
+- Tap widget **Saldo Cepat** atau **Ringkasan Bulan Ini** → deep link ke Dashboard app.
+- Tap widget **Catat Cepat** → deep link ke Add Transaction sheet.
+
+## 67.4 Privacy
+
+- Widget **tidak** menampilkan nominal saldo secara default — tampilkan teks `Rp ••••••` yang bisa di-toggle.
+- Opsi "Sembunyikan nominal di widget" tersedia di **Pengaturan > Privasi > Widget**.
+
+---
+
+# 68. Duplicate Transaction Detector
+
+## 68.1 Overview
+
+Mencegah double-entry akibat human error (bukan retry jaringan — itu sudah ditangani oleh idempotency).
+
+## 68.2 Logika Deteksi
+
+Sistem menampilkan peringatan jika dalam **2 menit terakhir** terdapat transaksi lokal yang memiliki:
+- Nominal (`amount`) **identik**, DAN
+- `account_id` **identik**, DAN
+- `type` **identik**.
+
+## 68.3 UX
+
+- Setelah user menekan **Simpan**, sistem mengecek SQLite lokal sebelum memproses.
+- Jika terdeteksi potensi duplikat, muncul bottom sheet konfirmasi:
+  > *"Kamu baru saja catat Rp 25.000 untuk Makanan. Apakah ini transaksi berbeda?"*
+  - Tombol **"Ya, Simpan"** → lanjutkan save.
+  - Tombol **"Batal"** → kembali ke form.
+- Jika user memilih simpan, tidak ada pemeriksaan ulang untuk transaksi yang sama dalam 30 detik berikutnya (cool-down).
+
+## 68.4 Rules
+
+- Deteksi hanya dilakukan client-side via SQLite lokal.
+- Tidak menambah API call atau latensi server.
+- Deteksi **tidak berlaku** untuk transaksi dari template (sudah disadari berulang oleh user).
+
+---
+
+# 69. Audit Log / Riwayat Perubahan Transaksi
+
+## 69.1 Overview
+
+Setiap perubahan (edit) pada transaksi menyimpan snapshot versi sebelumnya untuk audit dan pemulihan.
+
+## 69.2 Data Model — `transaction_history`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| id | UUID | Yes | Primary key |
+| transaction_id | UUID | Yes | FK ke `transactions.id` |
+| user_id | UUID | Yes | Pemilik transaksi |
+| changed_by | VARCHAR(20) | Yes | Enum: `'user'`, `'system'` (untuk resolusi konflik sync) |
+| snapshot_before | JSONB | Yes | Snapshot lengkap field transaksi sebelum diubah |
+| snapshot_after | JSONB | Yes | Snapshot lengkap field transaksi sesudah diubah |
+| changed_at | TIMESTAMPTZ | Yes | Waktu perubahan |
+
+## 69.3 UX — Riwayat Perubahan
+
+- Di Transaction Detail, terdapat link **"Lihat riwayat perubahan"** (tampil hanya jika ada riwayat).
+- Menampilkan timeline perubahan dalam format:
+  > *"Diedit 2 jam lalu: nominal diubah dari Rp 20.000 → Rp 25.000, catatan: 'Nasi Goreng'."*
+- User **tidak dapat** restore ke versi lama via UI (fitur ini hanya untuk audit transparansi, bukan undo).
+
+## 69.4 Endpoints
+
+```http
+GET /api/v1/transactions/:id/history
+```
+
+## 69.5 Retensi
+
+- Riwayat perubahan disimpan selama **1 tahun** sejak `changed_at`.
+- Cron job membersihkan entri `transaction_history` yang lebih tua dari 1 tahun.
+
+---
+
+# 70. Backup & Restore via iCloud Drive
+
+## 70.1 Overview
+
+Pengguna dapat membuat backup penuh data lokal ke iCloud Drive untuk keperluan ganti iPhone atau reinstall app.
+
+## 70.2 Backup Flow
+
+1. User membuka **Pengaturan > Data & Backup > Buat Backup**.
+2. App mengekspor seluruh data SQLite lokal (`local_transactions`, `local_accounts`, `local_categories`) ke format JSON terenkripsi.
+3. File disimpan ke **iCloud Drive / UangKu/** dengan nama `UangKu_Backup_YYYYMMDD_HHMMSS.ukbak`.
+4. Enkripsi: AES-256-GCM dengan kunci derivasi dari PIN user (PBKDF2).
+5. Toast konfirmasi: *"Backup berhasil disimpan ke iCloud Drive."*
+
+## 70.3 Restore Flow
+
+1. User membuka **Pengaturan > Data & Backup > Pulihkan dari Backup**.
+2. App menampilkan daftar file `.ukbak` yang tersedia di iCloud Drive.
+3. User memilih file backup, memasukkan PIN untuk dekripsi.
+4. **Konfirmasi destruktif:** *"Memulihkan backup akan menggantikan seluruh data lokal saat ini. Lanjutkan?"*
+5. Data di-restore ke SQLite lokal, kemudian sync push ke server.
+
+## 70.4 Rules
+
+- Backup bersifat **lokal dan terenkripsi** — UangKu tidak memiliki akses ke konten backup.
+- Backup hanya berisi data lokal SQLite, bukan token autentikasi.
+- Pengguna harus login ulang setelah restore (token tidak di-backup).
+- Maksimum **10 file backup** tersimpan di iCloud Drive. File tertua dihapus otomatis jika melebihi limit.
+
+---
+
+# 71. Data Import dari Aplikasi Lain (CSV Import)
+
+## 71.1 Overview
+
+Memudahkan pengguna yang pindah dari aplikasi pencatatan keuangan lain dengan fitur import data via file CSV.
+
+## 71.2 User Journey
+
+1. User membuka **Pengaturan > Data & Backup > Import CSV**.
+2. User memilih file CSV dari Files app (iOS) via `expo-document-picker`.
+3. App melakukan **preview** 10 baris pertama dan menampilkan mapping kolom:
+   - User memetakan kolom CSV ke field aplikasi (Tanggal, Nominal, Tipe, Kategori, Catatan).
+4. App memvalidasi format:
+   - Tanggal harus parseable.
+   - Nominal harus angka positif.
+   - Kategori yang tidak dikenali → otomatis dipetakan ke "Lainnya".
+5. Summary preview: *"Ditemukan 120 transaksi. 115 siap diimport, 5 perlu perbaikan."*
+6. User mengonfirmasi → import berjalan batch ke SQLite lokal → sync push ke server.
+
+## 71.3 Format CSV yang Diterima
+
+- Encoding: UTF-8 (dengan atau tanpa BOM).
+- Delimiter: koma (`,`) atau titik koma (`;`) — auto-detected.
+- Header baris pertama wajib ada.
+- Kolom minimum yang diperlukan: **Tanggal** dan **Nominal**.
+
+## 71.4 Rules & Constraints
+
+- Maksimum **1.000 baris per import** (MVP).
+- Import menggunakan `client_id` yang digenerate baru untuk setiap baris, sehingga aman dari duplikasi.
+- Transaksi hasil import diberi tag `source: 'csv_import'` di metadata (disimpan di field `note` sebagai suffix opsional yang bisa dihapus user).
+- Import yang gagal sebagian tidak membatalkan baris yang berhasil (partial success).
+
+---
+
+# 72. Onboarding Interaktif & Initial Balance Setup
+
+## 72.1 Onboarding Tour
+
+Menggantikan onboarding singkat yang tidak dispec, dengan alur terstruktur:
+
+### Flow (Maksimal 4 Langkah)
+
+1. **Selamat Datang** — Ilustrasi + tagline: *"Catat uangmu dalam 10 detik."*
+2. **Catat Cepat** — Demo animasi custom keypad.
+3. **Selalu Tersimpan** — Penjelasan offline-first: *"Transaksi kamu aman meski tanpa internet."*
+4. **Privasi Terjamin** — *"Data keuanganmu hanya milikmu. Tidak ada iklan, tidak ada pelacakan."*
+
+### Rules
+
+- **Skip** tersedia di setiap slide.
+- Onboarding tidak ditampilkan ulang pada re-install jika user sudah memiliki akun (detected via Supabase Auth silent sign-in).
+- Setelah onboarding, arahkan ke **Initial Balance Setup** (lihat 72.2).
+
+## 72.2 Initial Balance Setup
+
+Alur ini muncul tepat setelah onboarding selesai atau setelah akun default pertama dibuat:
+
+1. Layar menampilkan: *"Berapa saldo di Dompet / Kasmu sekarang?"*
+2. Custom numeric keypad muncul langsung (konsisten dengan Add Transaction UX).
+3. User memasukkan saldo awal. Tombol **"Mulai dengan Rp 0"** tersedia sebagai default.
+4. Setelah konfirmasi, `initial_balance` di akun default diperbarui.
+5. User langsung masuk ke Dashboard yang sudah menampilkan saldo yang benar.
+
+### Rules
+
+- Initial Balance Setup juga muncul saat user **menambahkan akun baru** (bukan hanya saat onboarding).
+- User dapat mengubah `initial_balance` di kemudian hari melalui **Edit Akun**.
+
+---
+
+# 73. Account Ordering & Customization
+
+## 73.1 Overview
+
+Pengguna dapat mengatur tampilan dan identitas visual setiap akun/dompet.
+
+## 73.2 Kustomisasi yang Didukung
+
+| Opsi | Contoh |
+|---|---|
+| Nama akun | "BCA Utama", "Dompet Gajian" |
+| Ikon emoji | 💳 🏦 👝 💰 |
+| Warna akun | Pilihan 10 warna preset + color picker |
+| Urutan di Dashboard | Drag & drop untuk mengatur urutan kartu akun |
+| Sembunyikan dari Dashboard | Toggle tanpa perlu archive |
+
+## 73.3 Perubahan pada Tabel `accounts`
+
+Tambahkan kolom:
+
+```sql
+emoji        VARCHAR(10)  NULL  -- Emoji ikon akun
+color        VARCHAR(7)   NULL  -- Hex color, misal '#007AFF'
+sort_order   INTEGER      NOT NULL DEFAULT 0
+is_hidden    BOOLEAN      NOT NULL DEFAULT false  -- Tersembunyi dari Dashboard, berbeda dengan is_archived
+```
+
+## 73.4 Rules
+
+- `is_hidden = true` menyembunyikan akun dari Dashboard dan Add Transaction dropdown, tetapi akun tetap aktif dan saldo tetap dihitung dalam Net Worth.
+- Perubahan `sort_order` sync ke server dan lokal.
+
+---
+
+# 74. Bulk Actions pada Transaction List
+
+## 74.1 Overview
+
+Memungkinkan pengguna melakukan aksi terhadap beberapa transaksi sekaligus untuk efisiensi.
+
+## 74.2 User Journey
+
+1. User **long press** pada salah satu transaksi di list → masuk ke **Multi-Select Mode**.
+2. Checkmark muncul di setiap baris. User mengetuk transaksi lain untuk menambahkan ke seleksi.
+3. Bottom action bar muncul dengan pilihan aksi:
+   - **Hapus** (soft-delete semua yang dipilih)
+   - **Ubah Kategori** (recategorize batch)
+   - **Pindah Akun** (ubah account_id batch)
+4. Setelah konfirmasi, aksi dijalankan secara atomik ke SQLite lokal dan masuk ke outbox.
+5. Tap di luar seleksi atau tekan **Batal** untuk keluar dari Multi-Select Mode.
+
+## 74.3 Rules
+
+- Maksimum **100 transaksi** dapat dipilih sekaligus (MVP).
+- Bulk delete menghasilkan satu entri outbox per transaksi (bukan satu batch — untuk idempotency yang lebih aman).
+- Konfirmasi destruktif wajib sebelum bulk delete: *"Hapus 15 transaksi yang dipilih? Tindakan ini tidak dapat dibatalkan."*
+
+---
+
+# 75. "Available Balance" vs "Total Balance"
+
+## 75.1 Overview
+
+Beberapa pengguna ingin menyisihkan sebagian saldo sebagai dana darurat atau alokasi khusus, sehingga Dashboard perlu membedakan antara **Saldo Total** dan **Saldo Tersedia**.
+
+## 75.2 Konsep
+
+- **Saldo Total (Total Balance):** Seluruh saldo akun aktif tanpa pengurangan.
+- **Saldo Tersedia (Available Balance):** Saldo Total dikurangi **Dana Disisihkan** yang ditetapkan user.
+
+## 75.3 Perubahan pada Tabel `accounts`
+
+Tambahkan kolom:
+
+```sql
+reserved_amount BIGINT NOT NULL DEFAULT 0  -- Nominal yang "disisihkan" / dikunci, dalam minor unit
+```
+
+## 75.4 UX
+
+- Di Edit Akun, user dapat mengisi **"Dana Disisihkan"** (misal: Rp 5.000.000 sebagai dana darurat).
+- Dashboard menampilkan dua nilai di card saldo:
+  - **Saldo Total:** `Rp 12.500.000`
+  - **Tersedia:** `Rp 7.500.000` (dimunculkan sebagai teks sekunder lebih kecil)
+- Fitur ini **tidak memblokir** transaksi — murni informasional.
+
+---
+
+# 76. Deep Links & Universal Links
+
+## 76.1 Overview
+
+Deep links memungkinkan navigasi langsung ke screen tertentu dari notifikasi, widget, atau shared link.
+
+## 76.2 Skema Deep Link
+
+```text
+uangku://dashboard
+uangku://add-transaction
+uangku://transaction/:id
+uangku://reports?month=2026-10
+uangku://goals/:id
+uangku://budgets
+```
+
+## 76.3 Universal Link (HTTPS)
+
+Untuk sharing link antar pengguna (jika ada fitur share di masa depan):
+
+```text
+https://app.uangku.id/transaction/:id  -- Hanya dapat dibuka oleh pemilik transaksi
+```
+
+## 76.4 Implementasi
+
+- Konfigurasi di `app.json` via Expo `scheme` dan `intentFilters`.
+- Setiap notifikasi push membawa `data.deepLink` yang di-handle oleh `expo-notifications` response handler.
+- Widget tap membuka deep link yang sesuai.
+
+---
+
+# 77. Force Update & API Version Compatibility
+
+## 77.1 Overview
+
+Mendefinisikan mekanisme yang memastikan versi app lama tidak break ketika API berubah ke versi baru.
+
+## 77.2 Endpoint Version Check
+
+```http
+GET /api/v1/app-config
+```
+
+Response:
+
+```json
+{
+  "data": {
+    "minimumAppVersion": "1.2.0",
+    "latestAppVersion": "1.5.0",
+    "forceUpdateMessage": "Versi aplikasi ini sudah tidak didukung. Silakan perbarui UangKu di App Store.",
+    "storeUrl": "https://apps.apple.com/app/uangku/id..."
+  }
+}
+```
+
+## 77.3 Flow di Aplikasi
+
+1. Saat app launch (setelah splash screen, sebelum UI render), panggil `GET /api/v1/app-config`.
+2. Bandingkan `minimumAppVersion` dengan versi app saat ini (`expo-constants`).
+3. Jika versi app < `minimumAppVersion`:
+   - Tampilkan modal **full-screen** (tidak bisa di-dismiss) dengan pesan dan tombol **"Perbarui Sekarang"** → buka App Store.
+4. Jika versi app < `latestAppVersion` (tapi >= minimum):
+   - Tampilkan **banner non-blocking** di atas Dashboard: *"Versi baru tersedia. Perbarui untuk fitur terbaru."*
+
+## 77.4 API Deprecation Strategy
+
+- Header `Sunset: <date>` dikirim pada endpoint yang akan deprecated.
+- Client menampilkan log warning internal (tidak ke user) saat menerima header ini.
+- Minimum **3 bulan** notice sebelum endpoint lama dimatikan.
+
+---
+
+# 78. Localization (i18n) Strategy
+
+## 78.1 Overview
+
+Mendefinisikan strategi lokalisasi untuk mendukung multi-bahasa di masa depan.
+
+## 78.2 MVP
+
+- Bahasa default dan satu-satunya: **Bahasa Indonesia**.
+- Semua string UI didefinisikan di file i18n terstruktur dari hari pertama (tidak boleh hard-code string di komponen).
+
+### Struktur File
+
+```text
+src/locales/
+├── id/
+│   ├── common.json       -- Tombol, label umum
+│   ├── transaction.json  -- String layar transaksi
+│   ├── dashboard.json    -- String dashboard
+│   ├── reports.json      -- String laporan
+│   ├── settings.json     -- String pengaturan
+│   └── errors.json       -- Pesan error user-facing
+└── en/ (placeholder untuk V2)
+```
+
+### Library
+
+Gunakan `i18next` + `react-i18next` dengan deteksi locale dari `expo-localization`.
+
+## 78.3 Roadmap
+
+- **V1.x:** Bahasa Indonesia saja.
+- **V2:** Tambahkan English sebagai bahasa kedua, dipilih user di Settings.
+
+## 78.4 Rules
+
+- Tanggal dan angka di-format sesuai locale aktif via `Intl.DateTimeFormat` dan `Intl.NumberFormat`.
+- Currency formatting menggunakan `Intl.NumberFormat` dengan `style: 'currency'` untuk konsistensi lintas platform.
+
+---

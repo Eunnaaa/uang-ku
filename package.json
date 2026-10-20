@@ -10,7 +10,13 @@
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",
-    "typecheck": "turbo run typecheck"
+    "typecheck": "turbo run typecheck",
+    "api:dev": "bun --cwd apps/api dev",
+    "api:start": "bun --cwd apps/api start",
+    "mobile:start": "bun --cwd apps/mobile start",
+    "mobile:tunnel": "bun --cwd apps/mobile tunnel",
+    "mobile:ios": "bun --cwd apps/mobile ios",
+    "mobile:android": "bun --cwd apps/mobile android"
   },
   "devDependencies": {
     "turbo": "^2.11.7",
