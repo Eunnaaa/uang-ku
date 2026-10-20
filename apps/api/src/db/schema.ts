@@ -98,8 +98,79 @@ export const syncEvents = pgTable('sync_events', {
   index('idx_sync_events_user_cursor').on(table.userId, table.id)
 ]);
 
+// 7. Budgets Table (PRD Section 60.3)
+export const budgets = pgTable('budgets', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').references(() => profiles.id, { onDelete: 'cascade' }).notNull(),
+  categoryId: uuid('category_id').references(() => categories.id).notNull(),
+  amount: bigint('amount', { mode: 'number' }).notNull(),
+  currency: varchar('currency', { length: 3 }).default('IDR').notNull(),
+  period: varchar('period', { length: 10 }).default('monthly').notNull(), // 'monthly' | 'weekly'
+  isActive: boolean('is_active').default(true).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_budgets_user_active').on(table.userId, table.categoryId, table.isActive),
+  check('chk_budget_amount', sql`amount > 0`),
+]);
+
+// 8. Financial Goals Table (PRD Section 61.3)
+export const financialGoals = pgTable('financial_goals', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').references(() => profiles.id, { onDelete: 'cascade' }).notNull(),
+  name: varchar('name', { length: 100 }).notNull(),
+  emoji: varchar('emoji', { length: 10 }).default('🎯'),
+  targetAmount: bigint('target_amount', { mode: 'number' }).notNull(),
+  currentAmount: bigint('current_amount', { mode: 'number' }).default(0).notNull(),
+  currency: varchar('currency', { length: 3 }).default('IDR').notNull(),
+  targetDate: varchar('target_date', { length: 20 }),
+  status: varchar('status', { length: 20 }).default('active').notNull(), // 'active' | 'achieved' | 'archived'
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_goals_user_status').on(table.userId, table.status),
+  check('chk_goal_target', sql`target_amount > 0`),
+]);
+
+// 9. Recurring Rules Table (PRD Section 58.3)
+export const recurringRules = pgTable('recurring_rules', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').references(() => profiles.id, { onDelete: 'cascade' }).notNull(),
+  accountId: uuid('account_id').references(() => accounts.id).notNull(),
+  categoryId: uuid('category_id').references(() => categories.id),
+  type: varchar('type', { length: 20 }).notNull(), // 'income' | 'expense'
+  amount: bigint('amount', { mode: 'number' }).notNull(),
+  frequency: varchar('frequency', { length: 20 }).notNull(), // 'daily' | 'weekly' | 'biweekly' | 'monthly' | 'yearly'
+  note: text('note'),
+  nextDueDate: varchar('next_due_date', { length: 20 }).notNull(),
+  isActive: boolean('is_active').default(true).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_recurring_user_due').on(table.userId, table.isActive, table.nextDueDate),
+  check('chk_recurring_amount', sql`amount > 0`),
+]);
+
+// 10. Transaction Templates Table (PRD Section 59.3)
+export const transactionTemplates = pgTable('transaction_templates', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').references(() => profiles.id, { onDelete: 'cascade' }).notNull(),
+  name: varchar('name', { length: 50 }).notNull(),
+  templatePayload: jsonb('template_payload').notNull(),
+  sortOrder: integer('sort_order').default(0).notNull(),
+  useCount: integer('use_count').default(0).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_templates_user_use').on(table.userId, table.useCount),
+]);
+
 export type Profile = typeof profiles.$inferSelect;
 export type Account = typeof accounts.$inferSelect;
 export type Category = typeof categories.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;
 export type NewTransaction = typeof transactions.$inferInsert;
+export type Budget = typeof budgets.$inferSelect;
+export type FinancialGoal = typeof financialGoals.$inferSelect;
+export type RecurringRule = typeof recurringRules.$inferSelect;
+export type TransactionTemplate = typeof transactionTemplates.$inferSelect;

@@ -3,7 +3,7 @@ import { createCategorySchema, updateCategorySchema, type CategoryModel } from '
 import { authMiddleware } from '../../middleware/auth';
 import { successResponse } from '../../middleware/error-handler';
 
-const defaultCategories: CategoryModel[] = [
+export const defaultCategories: CategoryModel[] = [
   // Expense
   { id: 'c1000000-0000-0000-0000-000000000001', userId: null, name: 'Makanan & Minuman', type: 'expense', icon: 'utensils', isSystem: true, isArchived: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
   { id: 'c1000000-0000-0000-0000-000000000002', userId: null, name: 'Transportasi', type: 'expense', icon: 'car', isSystem: true, isArchived: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
@@ -24,9 +24,9 @@ const defaultCategories: CategoryModel[] = [
 
 export const categoryRoutes = new Elysia({ prefix: '/api/v1/categories' })
   .use(authMiddleware)
-  .get('/', async ({ query }) => {
+  .get('/', async ({ query, user }) => {
     const typeFilter = query.type as string | undefined;
-    let list = defaultCategories.filter((c) => !c.isArchived);
+    let list = defaultCategories.filter((c) => !c.isArchived && (c.userId === null || c.userId === user.userId));
     if (typeFilter && (typeFilter === 'income' || typeFilter === 'expense')) {
       list = list.filter((c) => c.type === typeFilter);
     }
@@ -48,11 +48,14 @@ export const categoryRoutes = new Elysia({ prefix: '/api/v1/categories' })
     defaultCategories.push(newCategory);
     return successResponse(newCategory);
   })
-  .patch('/:id', async ({ params, body }) => {
+  .patch('/:id', async ({ params, body, user }) => {
     const input = updateCategorySchema.parse(body);
-    const category = defaultCategories.find((c) => c.id === params.id);
+    const category = defaultCategories.find((c) => c.id === params.id && (c.userId === user.userId || c.userId === null));
     if (!category) {
       throw new Error('RESOURCE_NOT_FOUND');
+    }
+    if (category.isSystem) {
+      throw new Error('FORBIDDEN');
     }
     if (input.name) category.name = input.name;
     if (input.icon !== undefined) category.icon = input.icon ?? null;
@@ -60,10 +63,13 @@ export const categoryRoutes = new Elysia({ prefix: '/api/v1/categories' })
     category.updatedAt = new Date().toISOString();
     return successResponse(category);
   })
-  .delete('/:id', async ({ params }) => {
-    const category = defaultCategories.find((c) => c.id === params.id);
+  .delete('/:id', async ({ params, user }) => {
+    const category = defaultCategories.find((c) => c.id === params.id && (c.userId === user.userId || c.userId === null));
     if (!category) {
       throw new Error('RESOURCE_NOT_FOUND');
+    }
+    if (category.isSystem) {
+      throw new Error('FORBIDDEN');
     }
     category.isArchived = true;
     category.updatedAt = new Date().toISOString();

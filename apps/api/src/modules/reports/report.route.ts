@@ -6,12 +6,12 @@ import { demoTransactions } from '../transactions/transaction.route';
 
 export const reportRoutes = new Elysia({ prefix: '/api/v1/reports' })
   .use(authMiddleware)
-  .get('/summary', async ({ query }) => {
+  .get('/summary', async ({ query, user }) => {
     const { month } = reportSummaryQuerySchema.parse(query);
 
-    // Filter active transactions for this month
+    // Filter active transactions for this month belonging to user
     const activeTx = demoTransactions.filter((t) => {
-      return t.deletedAt === null && t.transactionDate.startsWith(month);
+      return t.userId === user.userId && t.deletedAt === null && t.transactionDate.startsWith(month);
     });
 
     let totalIncome = 0;
@@ -46,11 +46,11 @@ export const reportRoutes = new Elysia({ prefix: '/api/v1/reports' })
       },
     });
   })
-  .get('/expenses-by-category', async ({ query }) => {
+  .get('/expenses-by-category', async ({ query, user }) => {
     const { month } = reportSummaryQuerySchema.parse(query);
 
     const expenseTx = demoTransactions.filter((t) => {
-      return t.deletedAt === null && t.type === 'expense' && t.transactionDate.startsWith(month);
+      return t.userId === user.userId && t.deletedAt === null && t.type === 'expense' && t.transactionDate.startsWith(month);
     });
 
     const categoryMap = new Map<string, { id: string; name: string; icon: string | null; total: number }>();

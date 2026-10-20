@@ -41,6 +41,7 @@ export const syncRoutes = new Elysia({ prefix: '/api/v1/sync' })
               transferFee: payload.transferFee || 0,
               currency: payload.currency || 'IDR',
               note: payload.note || null,
+              receiptUrl: payload.receiptUrl || null,
               transactionDate: payload.transactionDate || new Date().toISOString(),
               clientId: mutation.clientId,
               version: mutation.version || 1,
@@ -58,9 +59,9 @@ export const syncRoutes = new Elysia({ prefix: '/api/v1/sync' })
             });
           } else if (mutation.operation === 'update') {
             const payload = mutation.payload as any;
-            const existing = demoTransactions.find((t) => t.id === mutation.entityId);
+            const existing = demoTransactions.find((t) => t.id === mutation.entityId && t.userId === user.userId);
             if (!existing) {
-              rejected.push({ id: mutation.id, error: 'Entity not found' });
+              rejected.push({ id: mutation.id, error: 'Entity not found or unauthorized' });
               continue;
             }
             if (mutation.version <= existing.version) {
@@ -75,7 +76,7 @@ export const syncRoutes = new Elysia({ prefix: '/api/v1/sync' })
             Object.assign(existing, payload, { version: mutation.version, updatedAt: new Date().toISOString() });
             processed.push({ id: mutation.id, clientId: mutation.clientId, status: 'applied', version: existing.version });
           } else if (mutation.operation === 'delete') {
-            const existing = demoTransactions.find((t) => t.id === mutation.entityId);
+            const existing = demoTransactions.find((t) => t.id === mutation.entityId && t.userId === user.userId);
             if (existing) {
               existing.deletedAt = new Date().toISOString();
               existing.version += 1;
@@ -96,11 +97,12 @@ export const syncRoutes = new Elysia({ prefix: '/api/v1/sync' })
       rejected,
     });
   })
-  .get('/pull', async ({ query }) => {
+  .get('/pull', async ({ query, user }) => {
     const { cursor, limit } = syncPullQuerySchema.parse(query);
 
-    // Filter changes newer than cursor
-    const changes = demoTransactions.slice(0, limit);
+    // Filter changes belonging to the authenticated user
+    const userChanges = demoTransactions.filter((t) => t.userId === user.userId);
+    const changes = userChanges.slice(0, limit);
     const nextCursor = changes.length > 0 ? Buffer.from(new Date().toISOString()).toString('base64') : null;
 
     return successResponse({

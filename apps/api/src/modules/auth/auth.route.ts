@@ -3,8 +3,47 @@ import { registerSchema, loginSchema } from '@uangku/contracts';
 import { authMiddleware } from '../../middleware/auth';
 import { successResponse } from '../../middleware/error-handler';
 
+// In-memory sliding rate limiter for authentication endpoints
+const authRateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+function checkAuthRateLimit(identifier: string, maxAttempts = 15, windowMs = 60_000): boolean {
+  const now = Date.now();
+  // Periodic pruning if map gets large to prevent memory exhaustion DoS
+  if (authRateLimitMap.size > 1000) {
+    for (const [key, val] of authRateLimitMap.entries()) {
+      if (now > val.resetAt) {
+        authRateLimitMap.delete(key);
+      }
+    }
+  }
+
+  const record = authRateLimitMap.get(identifier);
+  if (!record || now > record.resetAt) {
+    authRateLimitMap.set(identifier, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (record.count >= maxAttempts) {
+    return false;
+  }
+  record.count += 1;
+  return true;
+}
+
+function getClientIp(headers: Record<string, string | undefined>): string {
+  const forwarded = headers['x-forwarded-for'];
+  if (forwarded) {
+    return forwarded.split(',')[0].trim();
+  }
+  return headers['x-real-ip'] || 'client';
+}
+
 export const authRoutes = new Elysia({ prefix: '/api/v1/auth' })
-  .post('/register', async ({ body }) => {
+  .post('/register', async ({ body, headers }) => {
+    const ip = getClientIp(headers);
+    if (!checkAuthRateLimit(`reg:${ip}`, 10, 60_000)) {
+      throw new Error('RATE_LIMIT_EXCEEDED');
+    }
+
     const input = registerSchema.parse(body);
     // In production, integrate with supabase.auth.signUp
     return successResponse({
@@ -16,7 +55,12 @@ export const authRoutes = new Elysia({ prefix: '/api/v1/auth' })
       token: 'demo-jwt-token-' + crypto.randomUUID(),
     });
   })
-  .post('/login', async ({ body }) => {
+  .post('/login', async ({ body, headers }) => {
+    const ip = getClientIp(headers);
+    if (!checkAuthRateLimit(`login:${ip}`, 15, 60_000)) {
+      throw new Error('RATE_LIMIT_EXCEEDED');
+    }
+
     const input = loginSchema.parse(body);
     // In production, integrate with supabase.auth.signInWithPassword
     return successResponse({

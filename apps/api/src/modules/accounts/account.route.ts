@@ -3,7 +3,7 @@ import { createAccountSchema, updateAccountSchema, type AccountModel } from '@ua
 import { authMiddleware } from '../../middleware/auth';
 import { successResponse } from '../../middleware/error-handler';
 
-// In-memory demo store fallback for rapid MVP testing when DB is booting
+// In-memory demo store fallback for rapid MVP testing when DB is booting (clean state)
 const defaultDemoAccounts: AccountModel[] = [
   {
     id: 'a1000000-0000-0000-0000-000000000001',
@@ -11,8 +11,8 @@ const defaultDemoAccounts: AccountModel[] = [
     name: 'Dompet Tunai',
     type: 'cash',
     currency: 'IDR',
-    initialBalance: 500000,
-    currentBalance: 750000,
+    initialBalance: 0,
+    currentBalance: 0,
     isDefault: true,
     isArchived: false,
     createdAt: new Date().toISOString(),
@@ -24,8 +24,8 @@ const defaultDemoAccounts: AccountModel[] = [
     name: 'BCA Utama',
     type: 'bank',
     currency: 'IDR',
-    initialBalance: 15000000,
-    currentBalance: 18250000,
+    initialBalance: 0,
+    currentBalance: 0,
     isDefault: false,
     isArchived: false,
     createdAt: new Date().toISOString(),
@@ -37,8 +37,8 @@ const defaultDemoAccounts: AccountModel[] = [
     name: 'GoPay',
     type: 'e_wallet',
     currency: 'IDR',
-    initialBalance: 250000,
-    currentBalance: 420000,
+    initialBalance: 0,
+    currentBalance: 0,
     isDefault: false,
     isArchived: false,
     createdAt: new Date().toISOString(),
@@ -50,7 +50,7 @@ export const accountRoutes = new Elysia({ prefix: '/api/v1/accounts' })
   .use(authMiddleware)
   .get('/', async ({ user }) => {
     // Return user accounts with computed balances
-    const userAccounts = defaultDemoAccounts.filter((a) => !a.isArchived);
+    const userAccounts = defaultDemoAccounts.filter((a) => !a.isArchived && a.userId === user.userId);
     return successResponse(userAccounts);
   })
   .post('/', async ({ body, user }) => {
@@ -71,9 +71,9 @@ export const accountRoutes = new Elysia({ prefix: '/api/v1/accounts' })
     defaultDemoAccounts.push(newAccount);
     return successResponse(newAccount);
   })
-  .patch('/:id', async ({ params, body }) => {
+  .patch('/:id', async ({ params, body, user }) => {
     const input = updateAccountSchema.parse(body);
-    const account = defaultDemoAccounts.find((a) => a.id === params.id);
+    const account = defaultDemoAccounts.find((a) => a.id === params.id && a.userId === user.userId);
     if (!account) {
       throw new Error('RESOURCE_NOT_FOUND');
     }
@@ -83,8 +83,8 @@ export const accountRoutes = new Elysia({ prefix: '/api/v1/accounts' })
     account.updatedAt = new Date().toISOString();
     return successResponse(account);
   })
-  .delete('/:id', async ({ params }) => {
-    const account = defaultDemoAccounts.find((a) => a.id === params.id);
+  .delete('/:id', async ({ params, user }) => {
+    const account = defaultDemoAccounts.find((a) => a.id === params.id && a.userId === user.userId);
     if (!account) {
       throw new Error('RESOURCE_NOT_FOUND');
     }
