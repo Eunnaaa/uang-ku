@@ -592,8 +592,8 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingBottom: 48,
-    gap: 18,
+    paddingBottom: 40,
+    gap: 16,
   },
   heroCard: {
     backgroundColor: colors.bg.surface,

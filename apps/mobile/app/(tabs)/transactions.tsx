@@ -15,7 +15,8 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Search, Filter, Trash2, X, Cloud, CloudOff, Edit3, Check, Wallet, ZoomIn, Camera, Layers, Tag } from 'lucide-react-native';
 import { formatRupiah, type TransactionModel, type CategoryModel } from '@uangku/contracts';
-import { colors } from '../../src/theme/colors';
+import { colors, type ThemeColors } from '../../src/theme/colors';
+import { useTheme } from '../../src/theme/themeContext';
 import { TransactionItem } from '../../src/components/TransactionItem';
 import { SyncEngine } from '../../src/sync/syncEngine';
 import {
@@ -82,6 +83,7 @@ function groupTransactionsByDate(items: TransactionModel[]) {
 export default function TransactionsScreen() {
   const router = useRouter();
   const toast = useToast();
+  const { colors, isDark } = useTheme();
   const params = useLocalSearchParams<{ accountId?: string }>();
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(params.accountId || null);
   const [activeTab, setActiveTab] = useState<'all' | 'expense' | 'income' | 'transfer'>('all');
@@ -96,6 +98,8 @@ export default function TransactionsScreen() {
   const [isBulkCatModalOpen, setIsBulkCatModalOpen] = useState(false);
   const [amountFilter, setAmountFilter] = useState<'all' | 'lt_50k' | '50k_100k' | 'gt_100k'>('all');
   const [recentSearches, setRecentSearches] = useState<string[]>(['Kopi', 'Bensin', 'Gaji', 'Makan']);
+
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
 
   useEffect(() => {
     if (params.accountId) {
@@ -322,6 +326,15 @@ export default function TransactionsScreen() {
     return groupTransactionsByDate(filteredTransactions);
   }, [filteredTransactions]);
 
+  const filteredNet = useMemo(() => {
+    return filteredTransactions.reduce((acc, t) => {
+      if (t.type === 'income') return acc + t.amount;
+      if (t.type === 'expense') return acc - t.amount;
+      if (t.type === 'transfer' && t.transferFee) return acc - t.transferFee;
+      return acc;
+    }, 0);
+  }, [filteredTransactions]);
+
   const isIncome = selectedTx?.type === 'income';
   const isExpense = selectedTx?.type === 'expense';
   const isTransfer = selectedTx?.type === 'transfer';
@@ -337,7 +350,7 @@ export default function TransactionsScreen() {
             <Text style={styles.headerSubtitle}>
               {isMultiSelectMode
                 ? `${selectedTxIds.size} dari ${filteredTransactions.length} dipilih`
-                : `${transactions.length} total transaksi tercatat`}
+                : `${filteredTransactions.length} transaksi tercatat`}
             </Text>
           </View>
           {filteredTransactions.length > 0 && (
@@ -361,152 +374,150 @@ export default function TransactionsScreen() {
             </View>
           )}
         </View>
-      </View>
 
-      {/* Search Input */}
-      <View style={styles.searchBar}>
-        <Search size={16} color={colors.text.muted} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Cari transaksi, kategori, atau dompet..."
-          placeholderTextColor={colors.text.muted}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-        {searchQuery.length > 0 && (
-          <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-            <X size={15} color={colors.text.muted} />
-          </TouchableOpacity>
-        )}
-      </View>
+        {/* 1. Fluid Segmented Control Tabs */}
+        <View style={styles.segmentContainer}>
+          {(['all', 'expense', 'income', 'transfer'] as const).map((tab) => {
+            const isActive = activeTab === tab;
+            const label = tab === 'all' ? 'Semua' : tab === 'expense' ? 'Pengeluaran' : tab === 'income' ? 'Pemasukan' : 'Transfer';
+            const activeColor =
+              tab === 'income'
+                ? colors.flow.income
+                : tab === 'expense'
+                ? colors.flow.expense
+                : tab === 'transfer'
+                ? colors.flow.transfer
+                : colors.gold.champagne;
 
-      {/* Recent Searches (PRD Section 64) */}
-      {!searchQuery && recentSearches.length > 0 && (
-        <View style={styles.recentSearchContainer}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentSearchScroll}>
-            <Text style={styles.recentSearchLabel}>Cepat:</Text>
-            {recentSearches.map((term, i) => (
+            return (
               <TouchableOpacity
-                key={i}
-                style={styles.recentSearchChip}
+                key={tab}
+                activeOpacity={0.7}
+                style={[
+                  styles.segmentTab,
+                  isActive && styles.segmentTabActive,
+                ]}
                 onPress={() => {
                   hapticSelection();
-                  setSearchQuery(term);
+                  setActiveTab(tab);
                 }}
               >
-                <Text style={styles.recentSearchText}>{term}</Text>
+                <Text
+                  style={[
+                    styles.segmentTabText,
+                    isActive && { color: activeColor, fontWeight: '700' },
+                  ]}
+                >
+                  {label}
+                </Text>
               </TouchableOpacity>
-            ))}
-          </ScrollView>
+            );
+          })}
         </View>
-      )}
 
-      {/* Quick Amount Filter Chips (PRD Section 64) */}
-      <View style={styles.amountFilterContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.amountFilterScroll}>
+        {/* 2. Sleek Rounded Search Bar */}
+        <View style={styles.searchBar}>
+          <Search size={15} color={colors.text.muted} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Cari catatan, kategori, nominal..."
+            placeholderTextColor={colors.text.muted}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <X size={14} color={colors.text.muted} />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* 3. Single Unified Filter Carousel Strip */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterStripScroll}
+        >
+          {selectedAccountId && (
+            <View style={styles.activeAccountChip}>
+              <Wallet size={11} color={colors.gold.champagne} />
+              <Text style={styles.activeAccountChipText} numberOfLines={1}>
+                {transactions.find((t) => t.accountId === selectedAccountId || t.destinationAccountId === selectedAccountId)?.account?.name || 'Dompet'}
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  hapticSelection();
+                  setSelectedAccountId(null);
+                }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <X size={11} color={colors.gold.champagne} />
+              </TouchableOpacity>
+            </View>
+          )}
+
           {(
             [
               { id: 'all', label: 'Semua Nominal' },
-              { id: 'lt_50k', label: '< Rp 50rb' },
-              { id: '50k_100k', label: 'Rp 50rb - 100rb' },
-              { id: 'gt_100k', label: '> Rp 100rb' },
+              { id: 'lt_50k', label: '< 50rb' },
+              { id: '50k_100k', label: '50rb - 100rb' },
+              { id: 'gt_100k', label: '> 100rb' },
             ] as const
           ).map((item) => {
             const isSelected = amountFilter === item.id;
             return (
               <TouchableOpacity
                 key={item.id}
-                style={[styles.amountFilterChip, isSelected && styles.amountFilterChipActive]}
+                style={[styles.filterChip, isSelected && styles.filterChipActive]}
                 onPress={() => {
                   hapticSelection();
                   setAmountFilter(item.id);
                 }}
               >
-                <Text style={[styles.amountFilterText, isSelected && styles.amountFilterTextActive]}>
+                <Text style={[styles.filterChipText, isSelected && styles.filterChipTextActive]}>
                   {item.label}
                 </Text>
               </TouchableOpacity>
             );
           })}
+
+          {!searchQuery && recentSearches.map((term, i) => (
+            <TouchableOpacity
+              key={i}
+              style={styles.suggestionChip}
+              onPress={() => {
+                hapticSelection();
+                setSearchQuery(term);
+              }}
+            >
+              <Text style={styles.suggestionChipText}>{term}</Text>
+            </TouchableOpacity>
+          ))}
         </ScrollView>
       </View>
 
-      {/* Active Account Filter Chip */}
-      {selectedAccountId && (
-        <View style={styles.activeFilterRow}>
-          <View style={styles.activeFilterChip}>
-            <Wallet size={12} color={colors.gold.champagne} />
-            <Text style={styles.activeFilterChipText}>
-              Dompet: {transactions.find((t) => t.accountId === selectedAccountId || t.destinationAccountId === selectedAccountId)?.account?.name || 'Terfilter'}
-            </Text>
-            <TouchableOpacity
-              onPress={() => {
-                hapticSelection();
-                setSelectedAccountId(null);
-              }}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <X size={12} color={colors.gold.champagne} />
-            </TouchableOpacity>
-          </View>
+      {/* Filtered Net Summary Breadcrumb */}
+      {filteredTransactions.length > 0 && (
+        <View style={styles.listSubHeader}>
+          <Text style={styles.listSubHeaderTitle}>AKTIVITAS TERBARU</Text>
+          <Text
+            style={[
+              styles.listSubHeaderNet,
+              { color: filteredNet >= 0 ? colors.flow.income : colors.flow.expense },
+            ]}
+          >
+            {filteredNet >= 0 ? '+' : ''}{formatRupiah(filteredNet)}
+          </Text>
         </View>
       )}
-
-      {/* Segment Filter Tabs */}
-      <View style={styles.tabsRow}>
-        {(['all', 'expense', 'income', 'transfer'] as const).map((tab) => {
-          const isActive = activeTab === tab;
-          const label = tab === 'all' ? 'Semua' : tab === 'expense' ? 'Pengeluaran' : tab === 'income' ? 'Pemasukan' : 'Transfer';
-          const activeBorderColor =
-            tab === 'income'
-              ? colors.flow.income
-              : tab === 'expense'
-              ? colors.flow.expense
-              : tab === 'transfer'
-              ? colors.flow.transfer
-              : colors.gold.champagne;
-          const activeBg =
-            tab === 'income'
-              ? colors.flow.incomeBg
-              : tab === 'expense'
-              ? colors.flow.expenseBg
-              : tab === 'transfer'
-              ? colors.flow.transferBg
-              : 'rgba(212, 175, 55, 0.16)';
-
-          return (
-            <TouchableOpacity
-              key={tab}
-              activeOpacity={0.7}
-              style={[
-                styles.tabBtn,
-                isActive && {
-                  backgroundColor: activeBg,
-                  borderColor: activeBorderColor,
-                },
-              ]}
-              onPress={() => {
-                hapticSelection();
-                setActiveTab(tab);
-              }}
-            >
-              <Text
-                style={[
-                  styles.tabBtnText,
-                  isActive && { color: activeBorderColor, fontWeight: '700' },
-                ]}
-              >
-                {label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
 
       {/* Transactions List */}
       <ScrollView
         style={styles.list}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent,
+          filteredTransactions.length === 0 && styles.listContentEmpty,
+        ]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -518,7 +529,7 @@ export default function TransactionsScreen() {
         {filteredTransactions.length === 0 ? (
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIconWrap}>
-              <Filter size={24} color={colors.gold.champagne} />
+              <Filter size={26} color={colors.gold.champagne} />
             </View>
             <Text style={styles.emptyTitle}>Tidak ada transaksi</Text>
             <Text style={styles.emptySubtitle}>
@@ -864,7 +875,7 @@ export default function TransactionsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.bg.base,
@@ -874,59 +885,149 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 8,
   },
+  headerTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
   headerTitle: {
-    fontSize: 22,
-    fontWeight: '700',
+    fontSize: 20,
+    fontWeight: '800',
     color: colors.text.primary,
     letterSpacing: -0.4,
   },
   headerSubtitle: {
-    fontSize: 12,
+    fontSize: 11.5,
     color: colors.text.muted,
-    marginTop: 2,
+    marginTop: 1,
     fontWeight: '500',
+  },
+  segmentContainer: {
+    flexDirection: 'row',
+    backgroundColor: isDark ? '#11131C' : colors.bg.elevated,
+    borderRadius: 14,
+    padding: 3,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : colors.border.subtle,
+  },
+  segmentTab: {
+    flex: 1,
+    paddingVertical: 7.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 11,
+  },
+  segmentTabActive: {
+    backgroundColor: isDark ? '#1B1F2C' : colors.bg.surface,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: isDark ? 0.25 : 0.08,
+    shadowRadius: 3,
+    elevation: isDark ? 0 : 2,
+  },
+  segmentTabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.text.muted,
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#12141D',
-    marginHorizontal: 16,
-    paddingHorizontal: 14,
-    height: 44,
-    borderRadius: 14,
+    backgroundColor: isDark ? '#11131C' : colors.bg.surface,
+    paddingHorizontal: 12,
+    height: 40,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : colors.border.subtle,
     gap: 8,
     marginBottom: 12,
   },
   searchInput: {
     flex: 1,
     color: colors.text.primary,
-    fontSize: 14,
+    fontSize: 13,
   },
-  activeFilterRow: {
-    paddingHorizontal: 16,
-    marginBottom: 10,
-    flexDirection: 'row',
-  },
-  activeFilterChip: {
+  filterStripScroll: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: 10,
-    backgroundColor: 'rgba(212, 175, 55, 0.12)',
-    borderWidth: 0.8,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
+    paddingVertical: 2,
+    paddingBottom: 4,
   },
-  activeFilterChipText: {
-    fontSize: 12,
-    fontWeight: '600',
+  activeAccountChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 4.5,
+    paddingHorizontal: 9,
+    borderRadius: 9,
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.12)' : 'rgba(180, 83, 9, 0.1)',
+    borderWidth: 0.8,
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.35)' : 'rgba(180, 83, 9, 0.3)',
+  },
+  activeAccountChipText: {
+    fontSize: 11,
+    fontWeight: '700',
     color: colors.gold.champagne,
+    maxWidth: 85,
+  },
+  filterChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4.5,
+    borderRadius: 9,
+    backgroundColor: isDark ? '#11131C' : colors.bg.surface,
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : colors.border.subtle,
+  },
+  filterChipActive: {
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.15)' : 'rgba(180, 83, 9, 0.12)',
+    borderColor: colors.gold.champagne,
+  },
+  filterChipText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: colors.text.muted,
+  },
+  filterChipTextActive: {
+    color: colors.gold.champagne,
+    fontWeight: '700',
+  },
+  suggestionChip: {
+    paddingHorizontal: 9,
+    paddingVertical: 4.5,
+    borderRadius: 9,
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.02)' : colors.bg.surface,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : colors.border.subtle,
+  },
+  suggestionChipText: {
+    fontSize: 11,
+    color: colors.text.secondary,
+  },
+  listSubHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 6,
+  },
+  listSubHeaderTitle: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.text.muted,
+    letterSpacing: 0.8,
+  },
+  listSubHeaderNet: {
+    fontSize: 12,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
   dateGroupContainer: {
-    marginBottom: 14,
+    marginBottom: 12,
   },
   dateGroupHeader: {
     flexDirection: 'row',
@@ -934,93 +1035,77 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 4,
     marginBottom: 6,
-    marginTop: 4,
+    marginTop: 6,
   },
   dateGroupLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: colors.text.muted,
-    letterSpacing: 0.3,
-    textTransform: 'capitalize',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
   },
   dailyNetBadge: {
     paddingHorizontal: 7,
     paddingVertical: 2,
-    borderRadius: 6,
+    borderRadius: 8,
   },
   dailyNetText: {
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
-  },
-  tabsRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    gap: 8,
-    marginBottom: 12,
-  },
-  tabBtn: {
-    paddingVertical: 7,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    backgroundColor: '#12141D',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
-  },
-  activeTabBtn: {
-    backgroundColor: 'rgba(212, 175, 55, 0.16)',
-    borderColor: colors.gold.champagne,
-  },
-  tabBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.text.muted,
-  },
-  activeTabBtnText: {
-    color: colors.gold.champagne,
   },
   list: {
     flex: 1,
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingBottom: 28,
+    paddingTop: 6,
+    paddingBottom: 32,
+  },
+  listContentEmpty: {
+    flexGrow: 1,
+    justifyContent: 'center',
   },
   emptyContainer: {
-    padding: 40,
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 32,
+    paddingBottom: 60,
   },
   emptyIconWrap: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(212, 175, 55, 0.1)',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.1)' : 'rgba(180, 83, 9, 0.1)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
+    marginBottom: 14,
   },
   emptyTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '600',
     color: colors.text.secondary,
-    marginBottom: 4,
+    marginBottom: 6,
+    textAlign: 'center',
   },
   emptySubtitle: {
     fontSize: 13,
     color: colors.text.muted,
     textAlign: 'center',
+    lineHeight: 18,
+    maxWidth: 260,
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(9, 10, 14, 0.75)',
+    backgroundColor: isDark ? 'rgba(9, 10, 14, 0.75)' : 'rgba(15, 23, 42, 0.45)',
     justifyContent: 'flex-end',
   },
   modalDismissOverlay: {
     ...StyleSheet.absoluteFill,
   },
   modalContent: {
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: 20,
@@ -1029,13 +1114,13 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderLeftWidth: 1,
     borderRightWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.25)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.25)' : 'rgba(180, 83, 9, 0.2)',
   },
   modalHandle: {
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.15)',
     alignSelf: 'center',
     marginBottom: 16,
   },
@@ -1054,15 +1139,15 @@ const styles = StyleSheet.create({
   modalCloseBtn: {
     padding: 6,
     borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
   },
   modalAmountCard: {
     alignItems: 'center',
     paddingVertical: 18,
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.03)' : colors.bg.elevated,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.06)' : colors.border.subtle,
     marginBottom: 18,
   },
   modalAmountText: {
@@ -1079,18 +1164,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 4,
     borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : colors.bg.elevated,
   },
   statusBadgeText: {
     fontSize: 11,
     fontWeight: '600',
   },
   metaCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.03)' : colors.bg.elevated,
     borderRadius: 18,
     padding: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.06)' : colors.border.subtle,
     marginBottom: 16,
     gap: 12,
   },
@@ -1109,11 +1194,11 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
   },
   noteCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.03)' : colors.bg.elevated,
     borderRadius: 18,
     padding: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.06)' : colors.border.subtle,
     marginBottom: 20,
   },
   noteHeaderRow: {
@@ -1144,7 +1229,9 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   noteInput: {
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : colors.bg.surface,
+    borderWidth: isDark ? 0 : 1,
+    borderColor: colors.border.subtle,
     borderRadius: 12,
     padding: 10,
     color: colors.text.primary,
@@ -1162,7 +1249,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.06)',
   },
   noteCancelText: {
     fontSize: 12,
@@ -1222,19 +1309,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 14,
     borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.05)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : colors.border.subtle,
   },
   modalCloseActionText: {
     color: colors.text.primary,
     fontSize: 14,
     fontWeight: '600',
-  },
-  headerTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
   },
   headerActionRow: {
     flexDirection: 'row',
@@ -1245,9 +1327,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 10,
-    backgroundColor: 'rgba(212, 175, 55, 0.12)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.12)' : 'rgba(180, 83, 9, 0.1)',
     borderWidth: 0.5,
-    borderColor: 'rgba(212, 175, 55, 0.25)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.25)' : 'rgba(180, 83, 9, 0.2)',
   },
   multiSelectToggleText: {
     fontSize: 12,
@@ -1258,7 +1340,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
   },
   selectActionText: {
     fontSize: 11,
@@ -1281,7 +1363,7 @@ const styles = StyleSheet.create({
     bottom: 24,
     left: 16,
     right: 16,
-    backgroundColor: '#161924',
+    backgroundColor: isDark ? '#161924' : colors.bg.surface,
     borderRadius: 16,
     paddingHorizontal: 18,
     paddingVertical: 12,
@@ -1289,10 +1371,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.3)' : colors.border.subtle,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.4,
+    shadowOpacity: isDark ? 0.4 : 0.12,
     shadowRadius: 16,
     elevation: 8,
   },
@@ -1326,12 +1408,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   detailReceiptCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.04)' : colors.bg.elevated,
     borderRadius: 14,
     padding: 12,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : colors.border.subtle,
   },
   detailReceiptHeader: {
     flexDirection: 'row',
@@ -1418,62 +1500,6 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  recentSearchContainer: {
-    paddingHorizontal: 16,
-    marginBottom: 8,
-  },
-  recentSearchScroll: {
-    alignItems: 'center',
-    gap: 8,
-  },
-  recentSearchLabel: {
-    fontSize: 11,
-    color: colors.text.muted,
-    fontWeight: '600',
-    marginRight: 2,
-  },
-  recentSearchChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-    backgroundColor: '#161924',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
-  },
-  recentSearchText: {
-    fontSize: 11,
-    color: colors.text.secondary,
-    fontWeight: '500',
-  },
-  amountFilterContainer: {
-    paddingHorizontal: 16,
-    marginBottom: 10,
-  },
-  amountFilterScroll: {
-    alignItems: 'center',
-    gap: 6,
-  },
-  amountFilterChip: {
-    paddingHorizontal: 11,
-    paddingVertical: 5,
-    borderRadius: 10,
-    backgroundColor: '#12141D',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
-  },
-  amountFilterChipActive: {
-    backgroundColor: 'rgba(212, 175, 55, 0.16)',
-    borderColor: colors.gold.champagne,
-  },
-  amountFilterText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.text.muted,
-  },
-  amountFilterTextActive: {
-    color: colors.gold.champagne,
-    fontWeight: '700',
-  },
   bulkActionButtons: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1483,9 +1509,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: 'rgba(212, 175, 55, 0.15)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.15)' : 'rgba(180, 83, 9, 0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.3)' : 'rgba(180, 83, 9, 0.25)',
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
@@ -1496,14 +1522,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   bulkCatModalContent: {
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 36,
     borderTopWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.25)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.25)' : 'rgba(180, 83, 9, 0.2)',
   },
   bulkCatSubtitle: {
     fontSize: 12,
@@ -1518,10 +1544,10 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 12,
     borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.03)' : colors.bg.elevated,
     marginBottom: 6,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : colors.border.subtle,
   },
   bulkCatItemText: {
     fontSize: 14,
@@ -1536,7 +1562,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingVertical: 12,
     borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
     alignItems: 'center',
   },
 });

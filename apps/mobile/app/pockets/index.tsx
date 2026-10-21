@@ -583,7 +583,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: colors.border.subtle,
@@ -605,7 +605,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   content: {
-    padding: 20,
+    padding: 16,
     paddingBottom: 40,
   },
   sectionLabel: {
@@ -617,7 +617,7 @@ const styles = StyleSheet.create({
   },
   accountTabs: {
     gap: 8,
-    marginBottom: 20,
+    marginBottom: 16,
   },
   accountTab: {
     flexDirection: 'row',

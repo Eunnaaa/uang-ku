@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Delete } from 'lucide-react-native';
-import { colors } from '../theme/colors';
+import { colors, type ThemeColors } from '../theme/colors';
+import { useTheme } from '../theme/themeContext';
 import { hapticLight, hapticSelection } from '../theme/haptics';
 
 interface CustomKeypadProps {
@@ -11,6 +12,9 @@ interface CustomKeypadProps {
 }
 
 export function CustomKeypad({ value, onChange, onDone }: CustomKeypadProps) {
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
+
   const handlePressDigit = (digit: string) => {
     hapticLight();
     const str = value === 0 ? digit : `${value}${digit}`;
@@ -94,7 +98,7 @@ export function CustomKeypad({ value, onChange, onDone }: CustomKeypadProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create({
   container: {
     width: '100%',
     paddingHorizontal: 2,
@@ -109,12 +113,17 @@ const styles = StyleSheet.create({
   chip: {
     flex: 1,
     paddingVertical: 7,
-    backgroundColor: '#141722',
+    backgroundColor: colors.bg.surface,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.22)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.22)' : 'rgba(180, 83, 9, 0.2)',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: isDark ? 0 : 0.03,
+    shadowRadius: 3,
+    elevation: isDark ? 0 : 1,
   },
   chipText: {
     color: colors.gold.champagne,
@@ -133,16 +142,21 @@ const styles = StyleSheet.create({
   key: {
     flex: 1,
     height: 52,
-    backgroundColor: '#141722',
+    backgroundColor: colors.bg.surface,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
     alignItems: 'center',
     justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: isDark ? 0 : 0.03,
+    shadowRadius: 3,
+    elevation: isDark ? 0 : 1,
   },
   backspaceKey: {
-    backgroundColor: 'rgba(212, 175, 55, 0.08)',
-    borderColor: 'rgba(212, 175, 55, 0.2)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.08)' : 'rgba(180, 83, 9, 0.08)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.2)' : 'rgba(180, 83, 9, 0.2)',
   },
   keyText: {
     color: colors.text.primary,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -22,10 +22,12 @@ import {
   Repeat,
   Receipt,
   Layers,
+  RefreshCw,
 } from 'lucide-react-native';
 import { type TransactionModel, type AccountModel, formatRupiah } from '@uangku/contracts';
 import * as SecureStore from 'expo-secure-store';
-import { colors } from '../../src/theme/colors';
+import { colors, type ThemeColors } from '../../src/theme/colors';
+import { useTheme } from '../../src/theme/themeContext';
 import { BalanceHeroCard } from '../../src/components/BalanceHeroCard';
 import { TransactionItem } from '../../src/components/TransactionItem';
 import {
@@ -38,16 +40,16 @@ import { SyncEngine } from '../../src/sync/syncEngine';
 import { hapticMedium, hapticSelection } from '../../src/theme/haptics';
 import { useAuth } from '../../src/auth/authContext';
 
-function getAccountIcon(type: string) {
+function getAccountIcon(type: string, iconColor = colors.gold.champagne) {
   switch (type) {
     case 'bank':
-      return <Landmark size={15} color={colors.gold.champagne} />;
+      return <Landmark size={15} color={iconColor} />;
     case 'cash':
-      return <Banknote size={15} color={colors.gold.champagne} />;
+      return <Banknote size={15} color={iconColor} />;
     case 'e_wallet':
-      return <Smartphone size={15} color={colors.gold.champagne} />;
+      return <Smartphone size={15} color={iconColor} />;
     default:
-      return <Wallet size={15} color={colors.gold.champagne} />;
+      return <Wallet size={15} color={iconColor} />;
   }
 }
 
@@ -60,9 +62,18 @@ function getAccountTypeName(type: string) {
   }
 }
 
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour >= 4 && hour < 11) return 'Selamat Pagi';
+  if (hour >= 11 && hour < 15) return 'Selamat Siang';
+  if (hour >= 15 && hour < 19) return 'Selamat Sore';
+  return 'Selamat Malam';
+}
+
 export default function HomeScreen() {
   const router = useRouter();
   const { user, isGuest } = useAuth();
+  const { colors, isDark } = useTheme();
   const [refreshing, setRefreshing] = useState(false);
   const [isPrivacyMasked, setIsPrivacyMasked] = useState(false);
   const [accounts, setAccounts] = useState<AccountModel[]>([]);
@@ -76,6 +87,8 @@ export default function HomeScreen() {
     totalReserved: 0,
   });
   const [pendingMutationsCount, setPendingMutationsCount] = useState<number>(0);
+
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
 
   const loadData = useCallback(async () => {
     try {
@@ -130,24 +143,26 @@ export default function HomeScreen() {
         {/* Top Header */}
         <View style={styles.headerRow}>
           <View>
-            <Text style={styles.greetingText}>Selamat Datang,</Text>
+            <Text style={styles.greetingText}>{getGreeting()},</Text>
             <Text style={styles.userNameText}>{user?.displayName || 'Tamu UangKu'}</Text>
           </View>
           <View style={styles.headerRight}>
+            <TouchableOpacity
+              activeOpacity={0.7}
+              style={styles.syncStatusBtn}
+              onPress={onRefresh}
+            >
+              <RefreshCw
+                size={12}
+                color={colors.gold.champagne}
+                style={refreshing ? { transform: [{ rotate: '45deg' }] } : undefined}
+              />
+              <Text style={styles.syncStatusText}>Tersinkron</Text>
+            </TouchableOpacity>
             <View style={styles.badgeLuxury}>
-              <Sparkles size={12} color={colors.gold.champagne} />
+              <Sparkles size={11} color={colors.gold.champagne} />
               <Text style={styles.badgeLuxuryText}>{isGuest ? 'GUEST' : 'ELITE'}</Text>
             </View>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              style={styles.headerAddBtn}
-              onPress={() => {
-                hapticMedium();
-                router.push('/transaction/new');
-              }}
-            >
-              <Plus size={16} color="#090A0E" strokeWidth={2.8} />
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -192,7 +207,7 @@ export default function HomeScreen() {
             >
               <View style={styles.accountCardTop}>
                 <View style={styles.accountIconBg}>
-                  {getAccountIcon(acc.type)}
+                  {getAccountIcon(acc.type, colors.gold.champagne)}
                 </View>
                 <View style={styles.accountTypeBadge}>
                   <Text style={styles.accountType}>{getAccountTypeName(acc.type)}</Text>
@@ -310,6 +325,11 @@ export default function HomeScreen() {
           >
             <View style={styles.quickToolIconBg}>
               <Landmark size={16} color={colors.gold.champagne} />
+              {pendingMutationsCount > 0 && (
+                <View style={styles.quickToolBadgeDot}>
+                  <Text style={styles.quickToolBadgeDotText}>{pendingMutationsCount}</Text>
+                </View>
+              )}
             </View>
             <Text style={styles.quickToolLabel}>Bank Sync</Text>
           </TouchableOpacity>
@@ -376,7 +396,7 @@ export default function HomeScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.bg.base,
@@ -386,14 +406,14 @@ const styles = StyleSheet.create({
   },
   contentContainer: {
     paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 28,
+    paddingTop: 12,
+    paddingBottom: 32,
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 16,
   },
   greetingText: {
     fontSize: 12,
@@ -411,18 +431,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  headerAddBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.gold.primary,
+  syncStatusBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: 5,
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 0.5,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)',
+  },
+  syncStatusText: {
+    fontSize: 10,
+    color: colors.gold.champagne,
+    fontWeight: '600',
   },
   badgeLuxury: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(212, 175, 55, 0.1)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.1)' : 'rgba(180, 83, 9, 0.1)',
     paddingHorizontal: 9,
     paddingVertical: 5,
     borderRadius: 16,
@@ -465,15 +493,20 @@ const styles = StyleSheet.create({
   },
   accountCard: {
     width: 148,
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     padding: 14,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.06)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: isDark ? 0 : 0.04,
+    shadowRadius: 8,
+    elevation: isDark ? 0 : 1,
   },
   accountCardDefault: {
-    borderColor: 'rgba(212, 175, 55, 0.4)',
-    backgroundColor: 'rgba(212, 175, 55, 0.03)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.4)' : 'rgba(180, 83, 9, 0.4)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.03)' : 'rgba(180, 83, 9, 0.03)',
   },
   accountCardTop: {
     flexDirection: 'row',
@@ -485,7 +518,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 10,
-    backgroundColor: 'rgba(212, 175, 55, 0.1)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.1)' : 'rgba(180, 83, 9, 0.1)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -493,7 +526,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
   },
   accountType: {
     fontSize: 9,
@@ -522,12 +555,12 @@ const styles = StyleSheet.create({
   },
   addAccountCard: {
     width: 112,
-    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.02)',
     padding: 14,
     borderRadius: 20,
     borderWidth: 1,
     borderStyle: 'dashed',
-    borderColor: 'rgba(212, 175, 55, 0.3)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.3)' : 'rgba(180, 83, 9, 0.3)',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
@@ -536,7 +569,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(212, 175, 55, 0.1)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.1)' : 'rgba(180, 83, 9, 0.1)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -553,21 +586,44 @@ const styles = StyleSheet.create({
   },
   quickToolBtn: {
     flex: 1,
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     borderRadius: 14,
     paddingVertical: 12,
     alignItems: 'center',
     gap: 6,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: isDark ? 0 : 0.03,
+    shadowRadius: 4,
+    elevation: isDark ? 0 : 1,
   },
   quickToolIconBg: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(212, 175, 55, 0.1)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.1)' : 'rgba(180, 83, 9, 0.1)',
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
+  },
+  quickToolBadgeDot: {
+    position: 'absolute',
+    top: -3,
+    right: -3,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.flow.expense,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  quickToolBadgeDotText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
   },
   quickToolLabel: {
     fontSize: 11,
@@ -578,13 +634,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#161925',
+    backgroundColor: isDark ? '#161925' : colors.bg.surface,
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.35)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.35)' : 'rgba(180, 83, 9, 0.35)',
     marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: isDark ? 0 : 0.04,
+    shadowRadius: 6,
+    elevation: isDark ? 0 : 1,
   },
   reconcileInboxLeft: {
     flexDirection: 'row',
@@ -596,7 +657,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 12,
-    backgroundColor: 'rgba(212, 175, 55, 0.15)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.15)' : 'rgba(180, 83, 9, 0.15)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -628,7 +689,7 @@ const styles = StyleSheet.create({
     padding: 30,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     borderRadius: 18,
     borderWidth: 1,
     borderColor: colors.border.subtle,
@@ -637,12 +698,12 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: 'rgba(212, 175, 55, 0.08)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.08)' : 'rgba(180, 83, 9, 0.08)',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.16)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.16)' : 'rgba(180, 83, 9, 0.16)',
   },
   emptyText: {
     color: colors.text.muted,
@@ -661,7 +722,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     shadowColor: colors.gold.primary,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
+    shadowOpacity: isDark ? 0.35 : 0.25,
     shadowRadius: 10,
     elevation: 8,
   },

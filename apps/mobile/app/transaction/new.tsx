@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -46,7 +46,8 @@ import {
   type TemplateModel,
   type PocketModel,
 } from '@uangku/contracts';
-import { colors } from '../../src/theme/colors';
+import { colors, type ThemeColors } from '../../src/theme/colors';
+import { useTheme } from '../../src/theme/themeContext';
 import { CustomKeypad } from '../../src/components/CustomKeypad';
 import {
   getLocalCategories,
@@ -69,6 +70,7 @@ import { useToast } from '../../src/components/Toast';
 export default function NewTransactionScreen() {
   const router = useRouter();
   const toast = useToast();
+  const { colors, isDark } = useTheme();
   const params = useLocalSearchParams<{
     initialType?: string;
     editId?: string;
@@ -110,6 +112,8 @@ export default function NewTransactionScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [categories, setCategories] = useState<CategoryModel[]>([]);
   const [accounts, setAccounts] = useState<AccountModel[]>([]);
+
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
 
   useEffect(() => {
     async function loadFormMetadata() {
@@ -536,11 +540,108 @@ export default function NewTransactionScreen() {
                     : colors.flow.transfer,
               },
             ]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.7}
           >
             {txType === 'income' ? '+ ' : txType === 'expense' ? '- ' : ''}
             {formatRupiah(amount)}
           </Text>
         </View>
+
+        {/* Quick Favorite Templates (PRD Section 59) */}
+        {!isEditMode && (
+          <View style={styles.templatesSection}>
+            <View style={styles.templateHeaderRow}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                <Sparkles size={11} color={colors.gold.champagne} />
+                <Text style={styles.fieldLabelNoMargin}>TEMPLATE FAVORIT (1-TAP)</Text>
+              </View>
+              {amount > 0 && (
+                <TouchableOpacity
+                  style={styles.addTemplateHeaderBtn}
+                  onPress={() => {
+                    hapticSelection();
+                    setTemplateNameInput(note || '');
+                    setIsSaveTemplateModalOpen(true);
+                  }}
+                >
+                  <Star size={11} color={colors.gold.champagne} />
+                  <Text style={styles.addTemplateHeaderText}>+ Simpan Template</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.templateScroll}>
+              {templates.map((tpl) => (
+                <TouchableOpacity
+                  key={tpl.id}
+                  style={styles.templateChip}
+                  onPress={() => handleApplyTemplate(tpl)}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <Bookmark size={9} color={colors.gold.champagne} />
+                    <Text style={styles.templateChipTitle}>{tpl.name}</Text>
+                  </View>
+                  <Text style={styles.templateChipAmount}>{formatRupiah(tpl.templatePayload.amount)}</Text>
+                </TouchableOpacity>
+              ))}
+
+              {templates.length === 0 &&
+                [
+                  { name: 'Kopi', amount: 25000, cat: 'Makanan' },
+                  { name: 'Makan Siang', amount: 45000, cat: 'Makanan' },
+                  { name: 'Bensin Motor', amount: 35000, cat: 'Transportasi' },
+                  { name: 'Bensin Mobil', amount: 200000, cat: 'Transportasi' },
+                  { name: 'Jajan Sore', amount: 20000, cat: 'Makanan' },
+                ].map((tpl) => (
+                  <TouchableOpacity
+                    key={tpl.name}
+                    style={styles.templateChip}
+                    onPress={() => {
+                      hapticSelection();
+                      setAmount(tpl.amount);
+                      setNote(tpl.name);
+                      const matchingCat = categories.find((c) => c.name.toLowerCase().includes(tpl.cat.toLowerCase()));
+                      if (matchingCat) setSelectedCategoryId(matchingCat.id);
+                    }}
+                  >
+                    <Text style={styles.templateChipTitle}>{tpl.name}</Text>
+                    <Text style={styles.templateChipAmount}>{formatRupiah(tpl.amount)}</Text>
+                  </TouchableOpacity>
+                ))}
+            </ScrollView>
+          </View>
+        )}
+
+        {/* Categories Grid (if not transfer) */}
+        {txType !== 'transfer' && (
+          <View style={styles.categoriesSection}>
+            <Text style={styles.fieldLabel}>KATEGORI</Text>
+            <View style={styles.catGrid}>
+              {categories.map((c) => {
+                const isSelected = selectedCategoryId === c.id;
+                return (
+                  <TouchableOpacity
+                    key={c.id}
+                    style={[styles.catItem, isSelected && styles.catItemSelected]}
+                    onPress={() => {
+                      hapticSelection();
+                      setSelectedCategoryId(c.id);
+                    }}
+                  >
+                    <View style={[styles.catIconWrap, isSelected && styles.catIconWrapSelected]}>
+                      {getCategoryIcon(c.icon)}
+                    </View>
+                    <Text style={[styles.catText, isSelected && styles.catTextSelected]} numberOfLines={1}>
+                      {c.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        )}
 
         {/* Account Pickers */}
         <View style={styles.formRow}>
@@ -567,6 +668,101 @@ export default function NewTransactionScreen() {
               })}
             </ScrollView>
           </View>
+        </View>
+
+        {txType === 'transfer' && (
+          <View style={styles.formRow}>
+            <View style={styles.formCol}>
+              <Text style={styles.fieldLabel}>KE AKUN TUJUAN</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
+                {accounts.map((acc) => {
+                  const isSelected = selectedDestAccountId === acc.id;
+                  return (
+                    <TouchableOpacity
+                      key={acc.id}
+                      style={[styles.accountPill, isSelected && styles.accountPillSelected]}
+                      onPress={() => {
+                        hapticSelection();
+                        setSelectedDestAccountId(acc.id);
+                      }}
+                    >
+                      <Wallet size={12} color={isSelected ? '#090A0E' : colors.text.muted} />
+                      <Text style={[styles.accountPillText, isSelected && styles.accountPillTextSelected]}>
+                        {acc.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </View>
+        )}
+
+        {/* Tactile Numeric Keypad - Direct Access */}
+        <CustomKeypad value={amount} onChange={setAmount} />
+
+        {/* Primary Save Button */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          style={[styles.saveBtn, isSaving && { opacity: 0.7 }]}
+          disabled={isSaving}
+          onPress={handleSave}
+        >
+          <Text style={styles.saveBtnText}>
+            {isSaving
+              ? 'Menyimpan...'
+              : isEditMode
+              ? `Perbarui Transaksi • ${formatRupiah(amount)}`
+              : `Simpan Transaksi • ${formatRupiah(amount)}`}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Additional Optional Details Section */}
+        <View style={styles.optionalSectionDivider}>
+          <Text style={styles.optionalSectionTitle}>RINCIAN & LAMPIRAN TAMBAHAN (OPSIONAL)</Text>
+        </View>
+
+        {/* Date Quick Selector */}
+        <View style={styles.dateSelectorRow}>
+          <View style={styles.dateLabelRow}>
+            <Calendar size={12} color={colors.gold.champagne} />
+            <Text style={styles.fieldLabelNoMargin}>WAKTU TRANSAKSI</Text>
+          </View>
+          <View style={styles.dateChipsRow}>
+            {[
+              { label: 'Hari Ini', days: 0 },
+              { label: 'Kemarin', days: 1 },
+              { label: '2 Hari Lalu', days: 2 },
+            ].map((d) => {
+              const isSelected = selectedDaysAgo === d.days;
+              return (
+                <TouchableOpacity
+                  key={d.days}
+                  style={[styles.dateChip, isSelected && styles.dateChipSelected]}
+                  onPress={() => {
+                    hapticSelection();
+                    setSelectedDaysAgo(d.days);
+                  }}
+                >
+                  <Text style={[styles.dateChipText, isSelected && styles.dateChipTextSelected]}>
+                    {d.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* Note Input */}
+        <View style={styles.noteBox}>
+          <TextInput
+            style={styles.noteInput}
+            placeholder="Tambahkan catatan (opsional)..."
+            placeholderTextColor={colors.text.muted}
+            value={note}
+            onChangeText={setNote}
+            maxLength={100}
+          />
         </View>
 
         {/* Pocket Selector (PRD Section 79.2) */}
@@ -599,34 +795,6 @@ export default function NewTransactionScreen() {
                     >
                       <Text style={[styles.accountPillText, isSelected && styles.accountPillTextSelected]}>
                         {pkt.emoji || '💰'} {pkt.name} ({formatRupiah(pkt.allocatedBalance)})
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          </View>
-        )}
-
-        {txType === 'transfer' && (
-          <View style={styles.formRow}>
-            <View style={styles.formCol}>
-              <Text style={styles.fieldLabel}>KE AKUN TUJUAN</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
-                {accounts.map((acc) => {
-                  const isSelected = selectedDestAccountId === acc.id;
-                  return (
-                    <TouchableOpacity
-                      key={acc.id}
-                      style={[styles.accountPill, isSelected && styles.accountPillSelected]}
-                      onPress={() => {
-                        hapticSelection();
-                        setSelectedDestAccountId(acc.id);
-                      }}
-                    >
-                      <Wallet size={12} color={isSelected ? '#090A0E' : colors.text.muted} />
-                      <Text style={[styles.accountPillText, isSelected && styles.accountPillTextSelected]}>
-                        {acc.name}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -675,78 +843,6 @@ export default function NewTransactionScreen() {
             </View>
           </View>
         )}
-
-        {/* Categories Grid (if not transfer) */}
-        {txType !== 'transfer' && (
-          <View style={styles.categoriesSection}>
-            <Text style={styles.fieldLabel}>KATEGORI</Text>
-            <View style={styles.catGrid}>
-              {categories.map((c) => {
-                const isSelected = selectedCategoryId === c.id;
-                return (
-                  <TouchableOpacity
-                    key={c.id}
-                    style={[styles.catItem, isSelected && styles.catItemSelected]}
-                    onPress={() => {
-                      hapticSelection();
-                      setSelectedCategoryId(c.id);
-                    }}
-                  >
-                    <View style={[styles.catIconWrap, isSelected && styles.catIconWrapSelected]}>
-                      {getCategoryIcon(c.icon)}
-                    </View>
-                    <Text style={[styles.catText, isSelected && styles.catTextSelected]} numberOfLines={1}>
-                      {c.name}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        )}
-
-        {/* Date Quick Selector */}
-        <View style={styles.dateSelectorRow}>
-          <View style={styles.dateLabelRow}>
-            <Calendar size={12} color={colors.gold.champagne} />
-            <Text style={styles.fieldLabelNoMargin}>WAKTU TRANSAKSI</Text>
-          </View>
-          <View style={styles.dateChipsRow}>
-            {[
-              { label: 'Hari Ini', days: 0 },
-              { label: 'Kemarin', days: 1 },
-              { label: '2 Hari Lalu', days: 2 },
-            ].map((d) => {
-              const isSelected = selectedDaysAgo === d.days;
-              return (
-                <TouchableOpacity
-                  key={d.days}
-                  style={[styles.dateChip, isSelected && styles.dateChipSelected]}
-                  onPress={() => {
-                    hapticSelection();
-                    setSelectedDaysAgo(d.days);
-                  }}
-                >
-                  <Text style={[styles.dateChipText, isSelected && styles.dateChipTextSelected]}>
-                    {d.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* Note Input */}
-        <View style={styles.noteBox}>
-          <TextInput
-            style={styles.noteInput}
-            placeholder="Tambahkan catatan (opsional)..."
-            placeholderTextColor={colors.text.muted}
-            value={note}
-            onChangeText={setNote}
-            maxLength={100}
-          />
-        </View>
 
         {/* Receipt Attachment Section (PRD Section 63) */}
         <View style={styles.receiptSection}>
@@ -832,86 +928,6 @@ export default function NewTransactionScreen() {
             )}
           </View>
         )}
-
-        {/* Quick Favorite Templates (PRD Section 59) */}
-        {!isEditMode && (
-          <View style={styles.templatesSection}>
-            <View style={styles.templateHeaderRow}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
-                <Sparkles size={11} color={colors.gold.champagne} />
-                <Text style={styles.fieldLabelNoMargin}>TEMPLATE FAVORIT (1-TAP)</Text>
-              </View>
-              {amount > 0 && (
-                <TouchableOpacity
-                  style={styles.addTemplateHeaderBtn}
-                  onPress={() => {
-                    hapticSelection();
-                    setTemplateNameInput(note || '');
-                    setIsSaveTemplateModalOpen(true);
-                  }}
-                >
-                  <Star size={11} color={colors.gold.champagne} />
-                  <Text style={styles.addTemplateHeaderText}>+ Simpan Template</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.templateScroll}>
-              {templates.map((tpl) => (
-                <TouchableOpacity
-                  key={tpl.id}
-                  style={styles.templateChip}
-                  onPress={() => handleApplyTemplate(tpl)}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                    <Bookmark size={9} color={colors.gold.champagne} />
-                    <Text style={styles.templateChipTitle}>{tpl.name}</Text>
-                  </View>
-                  <Text style={styles.templateChipAmount}>{formatRupiah(tpl.templatePayload.amount)}</Text>
-                </TouchableOpacity>
-              ))}
-
-              {templates.length === 0 &&
-                [
-                  { name: 'Kopi', amount: 25000, cat: 'Makanan' },
-                  { name: 'Makan Siang', amount: 45000, cat: 'Makanan' },
-                  { name: 'Bensin Motor', amount: 35000, cat: 'Transportasi' },
-                  { name: 'Bensin Mobil', amount: 200000, cat: 'Transportasi' },
-                  { name: 'Jajan Sore', amount: 20000, cat: 'Makanan' },
-                ].map((tpl) => (
-                  <TouchableOpacity
-                    key={tpl.name}
-                    style={styles.templateChip}
-                    onPress={() => {
-                      hapticSelection();
-                      setAmount(tpl.amount);
-                      setNote(tpl.name);
-                      const matchingCat = categories.find((c) => c.name.toLowerCase().includes(tpl.cat.toLowerCase()));
-                      if (matchingCat) setSelectedCategoryId(matchingCat.id);
-                    }}
-                  >
-                    <Text style={styles.templateChipTitle}>{tpl.name}</Text>
-                    <Text style={styles.templateChipAmount}>{formatRupiah(tpl.amount)}</Text>
-                  </TouchableOpacity>
-                ))}
-            </ScrollView>
-          </View>
-        )}
-
-        {/* Tactile Numeric Keypad */}
-        <CustomKeypad value={amount} onChange={setAmount} />
-
-        {/* Primary Save Button */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          style={[styles.saveBtn, isSaving && { opacity: 0.7 }]}
-          disabled={isSaving}
-          onPress={handleSave}
-        >
-          <Text style={styles.saveBtnText}>
-            {isSaving ? 'Menyimpan...' : isEditMode ? 'Perbarui Transaksi' : 'Simpan Transaksi'}
-          </Text>
-        </TouchableOpacity>
       </ScrollView>
 
       {/* Save Template Modal (PRD Section 59) */}
@@ -962,7 +978,7 @@ export default function NewTransactionScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.bg.base,
@@ -993,7 +1009,7 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 16,
     paddingTop: 12,
-    paddingBottom: 30,
+    paddingBottom: 40,
   },
   typeSegment: {
     flexDirection: 'row',
@@ -1096,23 +1112,28 @@ const styles = StyleSheet.create({
   },
   catItem: {
     width: '31%',
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     paddingVertical: 10,
     paddingHorizontal: 8,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.06)',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: isDark ? 0 : 0.03,
+    shadowRadius: 3,
+    elevation: isDark ? 0 : 1,
   },
   catItemSelected: {
     borderColor: colors.gold.champagne,
-    backgroundColor: 'rgba(212, 175, 55, 0.12)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.12)' : 'rgba(180, 83, 9, 0.1)',
   },
   catIconWrap: {
     width: 32,
     height: 32,
     borderRadius: 10,
-    backgroundColor: 'rgba(212, 175, 55, 0.1)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.1)' : 'rgba(180, 83, 9, 0.1)',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,
@@ -1162,14 +1183,14 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 8,
     borderRadius: 12,
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.06)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   dateChipSelected: {
-    backgroundColor: 'rgba(212, 175, 55, 0.16)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.16)' : 'rgba(180, 83, 9, 0.12)',
     borderColor: colors.gold.champagne,
   },
   dateChipText: {
@@ -1182,10 +1203,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   noteBox: {
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.07)' : colors.border.subtle,
     paddingHorizontal: 14,
     height: 44,
     justifyContent: 'center',
@@ -1204,14 +1225,28 @@ const styles = StyleSheet.create({
     marginTop: 8,
     shadowColor: colors.gold.primary,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: isDark ? 0.3 : 0.2,
     shadowRadius: 10,
+    elevation: 4,
   },
   saveBtnText: {
     fontSize: 15,
     fontWeight: '700',
     color: '#090A0E',
     letterSpacing: 0.2,
+  },
+  optionalSectionDivider: {
+    marginTop: 22,
+    marginBottom: 12,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: isDark ? 'rgba(255, 255, 255, 0.08)' : colors.border.subtle,
+  },
+  optionalSectionTitle: {
+    fontSize: 10.5,
+    color: colors.gold.champagne,
+    fontWeight: '700',
+    letterSpacing: 0.8,
   },
   templatesSection: {
     marginBottom: 14,
@@ -1229,9 +1264,9 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     paddingHorizontal: 12,
     borderRadius: 12,
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.25)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.25)' : 'rgba(180, 83, 9, 0.2)',
     alignItems: 'center',
   },
   templateChipTitle: {
@@ -1247,10 +1282,10 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   recurringSection: {
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.25)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.25)' : 'rgba(180, 83, 9, 0.2)',
     padding: 14,
     marginBottom: 14,
   },
@@ -1282,20 +1317,20 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingTop: 10,
     borderTopWidth: 0.5,
-    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+    borderTopColor: isDark ? 'rgba(255, 255, 255, 0.08)' : colors.border.subtle,
   },
   freqChip: {
     flex: 1,
     paddingVertical: 7,
     borderRadius: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.04)' : colors.bg.elevated,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : colors.border.subtle,
   },
   freqChipSelected: {
     borderColor: colors.gold.primary,
-    backgroundColor: 'rgba(212, 175, 55, 0.15)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.15)' : 'rgba(180, 83, 9, 0.1)',
   },
   freqChipText: {
     fontSize: 11,
@@ -1313,9 +1348,9 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     paddingHorizontal: 8,
     borderRadius: 8,
-    backgroundColor: 'rgba(212, 175, 55, 0.12)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.12)' : 'rgba(180, 83, 9, 0.1)',
     borderWidth: 0.5,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.3)' : 'rgba(180, 83, 9, 0.25)',
   },
   addTemplateHeaderText: {
     fontSize: 10,
@@ -1324,7 +1359,7 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backgroundColor: isDark ? 'rgba(0, 0, 0, 0.75)' : 'rgba(15, 23, 42, 0.45)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
@@ -1332,11 +1367,11 @@ const styles = StyleSheet.create({
   modalBox: {
     width: '100%',
     maxWidth: 360,
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     borderRadius: 20,
     padding: 20,
     borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.25)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.25)' : 'rgba(180, 83, 9, 0.2)',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1356,10 +1391,10 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   templateNameInput: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : colors.bg.elevated,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.3)' : colors.border.subtle,
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 14,
@@ -1374,7 +1409,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
     alignItems: 'center',
   },
   modalCancelText: {
@@ -1406,9 +1441,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.25)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.25)' : 'rgba(180, 83, 9, 0.2)',
     borderStyle: 'dashed',
-    backgroundColor: 'rgba(212, 175, 55, 0.05)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.05)' : 'rgba(180, 83, 9, 0.04)',
   },
   attachReceiptText: {
     fontSize: 12,
@@ -1419,11 +1454,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.04)' : colors.bg.elevated,
     borderRadius: 14,
     padding: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : colors.border.subtle,
   },
   receiptPreviewLeft: {
     flexDirection: 'row',

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,9 +15,7 @@ import { useRouter } from 'expo-router';
 import {
   ArrowDownLeft,
   ArrowUpRight,
-  Repeat,
   PieChart,
-  Sparkles,
   ChevronLeft,
   ChevronRight,
   Calendar,
@@ -41,11 +39,15 @@ import {
   Target,
   Trophy,
   Trash2,
+  CheckCircle2,
+  Sliders,
+  Sparkles,
 } from 'lucide-react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { formatRupiah, generateTransactionsCsv, type CategoryModel } from '@uangku/contracts';
-import { colors } from '../../src/theme/colors';
+import { colors, type ThemeColors } from '../../src/theme/colors';
+import { useTheme } from '../../src/theme/themeContext';
 import {
   getLocalTransactions,
   getLocalBudgets,
@@ -68,11 +70,18 @@ interface CategoryBreakdownItem {
   icon?: string | null;
 }
 
+type ReportTab = 'categories' | 'budgets' | 'goals';
+
 export default function ReportsScreen() {
   const router = useRouter();
   const toast = useToast();
+  const { colors, isDark } = useTheme();
   const [refreshing, setRefreshing] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [activeTab, setActiveTab] = useState<ReportTab>('categories');
+
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
+
   const [summary, setSummary] = useState({
     totalIncome: 0,
     totalExpense: 0,
@@ -163,6 +172,84 @@ export default function ReportsScreen() {
       console.error(err);
     }
   }, [selectedDate, selectedBudgetCatId]);
+
+  useEffect(() => {
+    loadReportData();
+  }, [loadReportData]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await loadReportData();
+    setRefreshing(false);
+  };
+
+  const handlePrevMonth = () => {
+    hapticSelection();
+    setSelectedDate((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
+  };
+
+  const handleNextMonth = () => {
+    hapticSelection();
+    setSelectedDate((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+  };
+
+  const handleResetCurrentMonth = () => {
+    hapticSelection();
+    setSelectedDate(new Date());
+  };
+
+  const periodLabel = useMemo(() => {
+    return new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric' }).format(selectedDate);
+  }, [selectedDate]);
+
+  const now = new Date();
+  const isCurrentMonth =
+    selectedDate.getFullYear() === now.getFullYear() && selectedDate.getMonth() === now.getMonth();
+
+  const isNetPositive = summary.netCashFlow >= 0;
+  const isNetZero = summary.netCashFlow === 0;
+
+  // Computed metrics for cash flow ratio
+  const totalFlow = summary.totalIncome + summary.totalExpense;
+  const incomeRatio = totalFlow > 0 ? Math.round((summary.totalIncome / totalFlow) * 100) : 0;
+  const expenseRatio = totalFlow > 0 ? 100 - incomeRatio : 0;
+  const savingsRate =
+    summary.totalIncome > 0
+      ? Math.max(0, Math.round(((summary.totalIncome - summary.totalExpense) / summary.totalIncome) * 100))
+      : 0;
+
+  // Computed metrics for budgets
+  const budgetCount = Object.keys(budgets).length;
+  const totalBudgetLimit = useMemo(() => {
+    return Object.values(budgets).reduce((acc, b) => acc + b, 0);
+  }, [budgets]);
+
+  const totalBudgetSpent = useMemo(() => {
+    return Object.entries(budgets).reduce((acc, [catId]) => {
+      const spent = categoryBreakdown.find((c) => c.id === catId)?.amount || 0;
+      return acc + spent;
+    }, 0);
+  }, [budgets, categoryBreakdown]);
+
+  const overBudgetCategoriesCount = useMemo(() => {
+    return Object.entries(budgets).filter(([catId, limit]) => {
+      const spent = categoryBreakdown.find((c) => c.id === catId)?.amount || 0;
+      return spent > limit;
+    }).length;
+  }, [budgets, categoryBreakdown]);
+
+  // Computed metrics for goals
+  const totalGoalsTarget = useMemo(() => {
+    return goals.reduce((acc, g) => acc + g.targetAmount, 0);
+  }, [goals]);
+
+  const totalGoalsSaved = useMemo(() => {
+    return goals.reduce((acc, g) => acc + g.currentAmount, 0);
+  }, [goals]);
+
+  const achievedGoalsCount = useMemo(() => {
+    return goals.filter((g) => g.status === 'achieved' || g.currentAmount >= g.targetAmount).length;
+  }, [goals]);
 
   const handleSaveBudget = async () => {
     const numeric = parseInt(budgetLimitInput.replace(/\D/g, ''), 10);
@@ -263,49 +350,6 @@ export default function ReportsScreen() {
     );
   };
 
-  const renderCategoryIcon = (iconName?: string | null) => {
-    const size = 15;
-    const color = colors.gold.champagne;
-    switch (iconName) {
-      case 'utensils': return <Utensils size={size} color={color} />;
-      case 'car': return <Car size={size} color={color} />;
-      case 'shopping-bag': return <ShoppingBag size={size} color={color} />;
-      case 'file-text': return <FileText size={size} color={color} />;
-      case 'film': return <Film size={size} color={color} />;
-      case 'heart': return <Heart size={size} color={color} />;
-      case 'book': return <Book size={size} color={color} />;
-      case 'briefcase': return <Briefcase size={size} color={color} />;
-      case 'gift': return <Gift size={size} color={color} />;
-      case 'laptop': return <Laptop size={size} color={color} />;
-      default: return <MoreHorizontal size={size} color={color} />;
-    }
-  };
-
-  useEffect(() => {
-    loadReportData();
-  }, [loadReportData]);
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await loadReportData();
-    setRefreshing(false);
-  };
-
-  const handlePrevMonth = () => {
-    hapticSelection();
-    setSelectedDate((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
-  };
-
-  const handleNextMonth = () => {
-    hapticSelection();
-    setSelectedDate((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
-  };
-
-  const handleResetCurrentMonth = () => {
-    hapticSelection();
-    setSelectedDate(new Date());
-  };
-
   const handleExportCsv = async () => {
     hapticMedium();
     try {
@@ -342,17 +386,33 @@ export default function ReportsScreen() {
     }
   };
 
-  const isNetPositive = summary.netCashFlow >= 0;
-  const periodLabel = new Intl.DateTimeFormat('id-ID', { month: 'long', year: 'numeric' }).format(selectedDate);
-  const now = new Date();
-  const isCurrentMonth =
-    selectedDate.getFullYear() === now.getFullYear() && selectedDate.getMonth() === now.getMonth();
+  const renderCategoryIcon = (iconName?: string | null) => {
+    const size = 15;
+    const color = colors.gold.champagne;
+    switch (iconName) {
+      case 'utensils': return <Utensils size={size} color={color} />;
+      case 'car': return <Car size={size} color={color} />;
+      case 'shopping-bag': return <ShoppingBag size={size} color={color} />;
+      case 'file-text': return <FileText size={size} color={color} />;
+      case 'film': return <Film size={size} color={color} />;
+      case 'heart': return <Heart size={size} color={color} />;
+      case 'book': return <Book size={size} color={color} />;
+      case 'briefcase': return <Briefcase size={size} color={color} />;
+      case 'gift': return <Gift size={size} color={color} />;
+      case 'laptop': return <Laptop size={size} color={color} />;
+      default: return <MoreHorizontal size={size} color={color} />;
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      {/* 1. Header & Month Navigator */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
-          <Text style={styles.headerTitle}>Laporan Keuangan</Text>
+          <View>
+            <Text style={styles.headerTitle}>Laporan Keuangan</Text>
+            <Text style={styles.headerSubtitle}>Analisis & Ringkasan Finansial</Text>
+          </View>
           <View style={styles.headerActions}>
             {!isCurrentMonth && (
               <TouchableOpacity
@@ -372,11 +432,11 @@ export default function ReportsScreen() {
           </View>
         </View>
 
-        {/* Period Month Navigator */}
+        {/* Period Month Navigator Pill */}
         <View style={styles.periodNavigator}>
           <TouchableOpacity
             style={styles.navBtn}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             onPress={handlePrevMonth}
           >
             <ChevronLeft size={18} color={colors.gold.champagne} />
@@ -385,11 +445,12 @@ export default function ReportsScreen() {
           <View style={styles.periodCenter}>
             <Calendar size={13} color={colors.gold.champagne} />
             <Text style={styles.periodText}>{periodLabel}</Text>
+            {isCurrentMonth && <View style={styles.currentMonthDot} />}
           </View>
 
           <TouchableOpacity
             style={styles.navBtn}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
             onPress={handleNextMonth}
           >
             <ChevronRight size={18} color={colors.gold.champagne} />
@@ -400,6 +461,7 @@ export default function ReportsScreen() {
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -408,17 +470,71 @@ export default function ReportsScreen() {
           />
         }
       >
-        {/* Cash Flow Summary Card */}
+        {/* 2. Executive Cash Flow Summary Hero Card */}
         <View style={styles.summaryCard}>
-          <Text style={styles.cardSectionLabel}>ARUS KAS PERIODE INI</Text>
+          <View style={styles.summaryTopRow}>
+            <View>
+              <Text style={styles.summarySectionLabel}>ARUS KAS BERSIH</Text>
+              <Text
+                style={[
+                  styles.netCashFlowValue,
+                  {
+                    color: isNetZero
+                      ? colors.text.secondary
+                      : isNetPositive
+                      ? colors.flow.income
+                      : colors.flow.expense,
+                  },
+                ]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                {isNetPositive && !isNetZero ? '+' : ''}{formatRupiah(summary.netCashFlow)}
+              </Text>
+            </View>
 
-          <View style={styles.flowRow}>
-            <View style={styles.flowCol}>
+            <View
+              style={[
+                styles.netStatusBadge,
+                {
+                  backgroundColor: isNetZero
+                    ? 'rgba(255, 255, 255, 0.06)'
+                    : isNetPositive
+                    ? colors.flow.incomeBg
+                    : colors.flow.expenseBg,
+                  borderColor: isNetZero
+                    ? 'rgba(255, 255, 255, 0.12)'
+                    : isNetPositive
+                    ? colors.flow.incomeBorder
+                    : colors.flow.expenseBorder,
+                },
+              ]}
+            >
+              {isNetZero ? (
+                <Text style={styles.netStatusTextMuted}>Seimbang</Text>
+              ) : isNetPositive ? (
+                <>
+                  <TrendingUp size={12} color={colors.flow.income} />
+                  <Text style={[styles.netStatusText, { color: colors.flow.income }]}>Surplus</Text>
+                </>
+              ) : (
+                <>
+                  <TrendingDown size={12} color={colors.flow.expense} />
+                  <Text style={[styles.netStatusText, { color: colors.flow.expense }]}>Defisit</Text>
+                </>
+              )}
+            </View>
+          </View>
+
+          {/* Income & Expense Split Boxes */}
+          <View style={styles.flowSplitRow}>
+            <View style={styles.flowBox}>
               <View style={styles.flowHeaderRow}>
                 <View style={[styles.flowIconCircle, { backgroundColor: colors.flow.incomeBg, borderColor: colors.flow.incomeBorder }]}>
-                  <ArrowDownLeft size={11} color={colors.flow.income} />
+                  <ArrowDownLeft size={12} color={colors.flow.income} />
                 </View>
-                <Text style={styles.flowLabel}>Total Pemasukan</Text>
+                <Text style={styles.flowLabel}>Pemasukan</Text>
               </View>
               <Text
                 style={[styles.flowValue, { color: colors.flow.income }]}
@@ -430,14 +546,14 @@ export default function ReportsScreen() {
               </Text>
             </View>
 
-            <View style={styles.flowDivider} />
+            <View style={styles.flowBoxDivider} />
 
-            <View style={[styles.flowCol, styles.flowColRight]}>
+            <View style={[styles.flowBox, styles.flowBoxRight]}>
               <View style={styles.flowHeaderRow}>
                 <View style={[styles.flowIconCircle, { backgroundColor: colors.flow.expenseBg, borderColor: colors.flow.expenseBorder }]}>
-                  <ArrowUpRight size={11} color={colors.flow.expense} />
+                  <ArrowUpRight size={12} color={colors.flow.expense} />
                 </View>
-                <Text style={styles.flowLabel}>Total Pengeluaran</Text>
+                <Text style={styles.flowLabel}>Pengeluaran</Text>
               </View>
               <Text
                 style={[styles.flowValue, { color: colors.flow.expense }]}
@@ -450,257 +566,361 @@ export default function ReportsScreen() {
             </View>
           </View>
 
-          {summary.totalFees > 0 && (
-            <View style={styles.feeNoticeRow}>
-              <Text style={styles.feeNoticeText}>Biaya Admin / Transfer:</Text>
-              <Text style={[styles.feeNoticeVal, { color: colors.flow.expense }]}>-{formatRupiah(summary.totalFees)}</Text>
+          {/* Visual Cash Flow Ratio Bar */}
+          {totalFlow > 0 && (
+            <View style={styles.ratioSection}>
+              <View style={styles.ratioBarContainer}>
+                <View
+                  style={[
+                    styles.ratioBarIncome,
+                    { flex: Math.max(0.02, summary.totalIncome) },
+                  ]}
+                />
+                <View
+                  style={[
+                    styles.ratioBarExpense,
+                    { flex: Math.max(0.02, summary.totalExpense) },
+                  ]}
+                />
+              </View>
+              <View style={styles.ratioLegendRow}>
+                <View style={styles.ratioLegendItem}>
+                  <View style={[styles.ratioDot, { backgroundColor: colors.flow.income }]} />
+                  <Text style={styles.ratioLegendText}>Pemasukan {incomeRatio}%</Text>
+                </View>
+                {savingsRate > 0 && (
+                  <View style={styles.savingsRateBadge}>
+                    <Sparkles size={10} color={colors.gold.champagne} />
+                    <Text style={styles.savingsRateText}>Tabungan {savingsRate}%</Text>
+                  </View>
+                )}
+                <View style={styles.ratioLegendItem}>
+                  <View style={[styles.ratioDot, { backgroundColor: colors.flow.expense }]} />
+                  <Text style={styles.ratioLegendText}>Pengeluaran {expenseRatio}%</Text>
+                </View>
+              </View>
             </View>
           )}
 
-          {/* Net Cash Flow Capsule Banner */}
-          <View
-            style={[
-              styles.netCashFlowBanner,
-              {
-                backgroundColor: isNetPositive ? 'rgba(16, 185, 129, 0.08)' : 'rgba(239, 68, 68, 0.08)',
-                borderColor: isNetPositive ? 'rgba(16, 185, 129, 0.24)' : 'rgba(239, 68, 68, 0.24)',
-              },
-            ]}
-          >
-            <View style={styles.netCashFlowLeft}>
-              {isNetPositive ? (
-                <TrendingUp size={13} color={colors.flow.income} />
-              ) : (
-                <TrendingDown size={13} color={colors.flow.expense} />
-              )}
-              <Text style={styles.netCashFlowLabel}>Arus Kas Bersih</Text>
+          {summary.totalFees > 0 && (
+            <View style={styles.feeNoticeRow}>
+              <Text style={styles.feeNoticeText}>Biaya Admin / Transfer Periode Ini</Text>
+              <Text style={[styles.feeNoticeVal, { color: colors.flow.expense }]}>-{formatRupiah(summary.totalFees)}</Text>
             </View>
-            <Text
-              style={[
-                styles.netCashFlowValue,
-                { color: isNetPositive ? colors.flow.income : colors.flow.expense },
-              ]}
-            >
-              {isNetPositive ? '+' : ''}{formatRupiah(summary.netCashFlow)}
-            </Text>
-          </View>
+          )}
         </View>
 
-        {/* Section 60: Budget / Spending Limit per Category */}
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Batas Anggaran Bulanan</Text>
-          <View style={{ flexDirection: 'row', gap: 6 }}>
-            <TouchableOpacity
-              style={styles.addBudgetBtn}
-              onPress={() => {
-                hapticSelection();
-                router.push('/budgets');
-              }}
-            >
-              <Text style={styles.addBudgetText}>Kelola Penuh</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.addBudgetBtn}
-              onPress={() => {
-                hapticSelection();
-                setIsBudgetModalOpen(true);
-              }}
-            >
-              <Plus size={12} color={colors.gold.champagne} />
-              <Text style={styles.addBudgetText}>Atur Budget</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {Object.keys(budgets).length === 0 ? (
-          <View style={styles.emptyBudgetCard}>
-            <Text style={styles.emptyBudgetText}>Belum ada batas anggaran bulanan yang ditentukan.</Text>
-          </View>
-        ) : (
-          Object.entries(budgets).map(([catId, budgetLimit]) => {
-            const spent = categoryBreakdown.find((c) => c.id === catId)?.amount || 0;
-            const percent = budgetLimit > 0 ? Math.round((spent / budgetLimit) * 100) : 0;
-            const isOver = spent > budgetLimit;
-            const isWarning = percent >= 80 && !isOver;
-            const catObj = allCategories.find((c) => c.id === catId);
-            const catName = catObj?.name || categoryBreakdown.find((c) => c.id === catId)?.name || 'Kategori';
-            const catIcon = catObj?.icon;
-
-            const barColor = isOver
-              ? colors.flow.expense
-              : isWarning
-              ? colors.gold.primary
-              : colors.flow.income;
-
+        {/* 3. Fluid Segmented Switcher */}
+        <View style={styles.segmentContainer}>
+          {(
+            [
+              { key: 'categories', label: 'Kategori', count: categoryBreakdown.length },
+              { key: 'budgets', label: 'Anggaran', count: budgetCount },
+              { key: 'goals', label: 'Target', count: goals.length },
+            ] as const
+          ).map((tab) => {
+            const isActive = activeTab === tab.key;
             return (
-              <View key={catId} style={styles.budgetCard}>
-                <View style={styles.budgetTopRow}>
-                  <View style={styles.budgetLeft}>
-                    <View style={styles.catIconCircle}>
-                      {renderCategoryIcon(catIcon)}
+              <TouchableOpacity
+                key={tab.key}
+                activeOpacity={0.7}
+                style={[styles.segmentTab, isActive && styles.segmentTabActive]}
+                onPress={() => {
+                  hapticSelection();
+                  setActiveTab(tab.key);
+                }}
+              >
+                <Text style={[styles.segmentTabText, isActive && styles.segmentTabTextActive]}>
+                  {tab.label}
+                </Text>
+                {tab.count > 0 && (
+                  <View style={[styles.segmentBadge, isActive && styles.segmentBadgeActive]}>
+                    <Text style={[styles.segmentBadgeText, isActive && styles.segmentBadgeTextActive]}>
+                      {tab.count}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* 4. Tab 1: Kategori (Expenses Breakdown) */}
+        {activeTab === 'categories' && (
+          <View style={styles.tabContentSection}>
+            <View style={styles.sectionHeaderRow}>
+              <View>
+                <Text style={styles.sectionTitle}>Pengeluaran per Kategori</Text>
+                <Text style={styles.sectionSubtitle}>
+                  {categoryBreakdown.length > 0
+                    ? `${categoryBreakdown.length} kategori • Total ${formatRupiah(summary.totalExpense)}`
+                    : 'Belum ada pengeluaran pada periode ini'}
+                </Text>
+              </View>
+            </View>
+
+            {categoryBreakdown.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <View style={styles.emptyIconCircle}>
+                  <PieChart size={24} color={colors.gold.champagne} />
+                </View>
+                <Text style={styles.emptyTitle}>Belum Ada Pengeluaran</Text>
+                <Text style={styles.emptySubtitle}>
+                  Transaksi pengeluaran yang dicatat pada bulan {periodLabel} akan otomatis dianalisis di sini.
+                </Text>
+              </View>
+            ) : (
+              categoryBreakdown.map((item, idx) => (
+                <View key={item.id} style={styles.categoryCard}>
+                  <View style={styles.catHeader}>
+                    <View style={styles.catLeft}>
+                      <View style={styles.catRankBadge}>
+                        <Text style={styles.catRankText}>#{idx + 1}</Text>
+                      </View>
+                      <View style={styles.catIconCircle}>
+                        {renderCategoryIcon(item.icon)}
+                      </View>
+                      <View style={styles.catNameCol}>
+                        <Text style={styles.catName}>{item.name}</Text>
+                        <Text style={styles.catShareText}>{item.percentage}% dari pengeluaran</Text>
+                      </View>
                     </View>
-                    <View>
-                      <Text style={styles.budgetName}>{catName}</Text>
-                      <Text style={styles.budgetSub}>
-                        {formatRupiah(spent)} dari {formatRupiah(budgetLimit)}
-                      </Text>
+                    <View style={styles.catRight}>
+                      <Text style={styles.catAmount}>-{formatRupiah(item.amount)}</Text>
                     </View>
+                  </View>
+                  {/* Progress Bar */}
+                  <View style={styles.progressTrack}>
+                    <View
+                      style={[
+                        styles.progressBar,
+                        {
+                          width: `${Math.min(item.percentage, 100)}%`,
+                          backgroundColor: idx === 0 ? colors.flow.expense : idx === 1 ? colors.gold.primary : colors.flow.transfer,
+                        },
+                      ]}
+                    />
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+        )}
+
+        {/* 5. Tab 2: Batas Anggaran (Budgets) */}
+        {activeTab === 'budgets' && (
+          <View style={styles.tabContentSection}>
+            {/* Budget Health Overview Banner */}
+            {budgetCount > 0 && (
+              <View style={styles.budgetHealthCard}>
+                <View style={styles.budgetHealthTop}>
+                  <View>
+                    <Text style={styles.budgetHealthLabel}>TOTAL ANGGARAN BULAN INI</Text>
+                    <Text style={styles.budgetHealthVal}>
+                      {formatRupiah(totalBudgetSpent)}{' '}
+                      <Text style={styles.budgetHealthLimit}>/ {formatRupiah(totalBudgetLimit)}</Text>
+                    </Text>
                   </View>
                   <View
                     style={[
-                      styles.budgetPercentBadge,
-                      { backgroundColor: isOver ? colors.flow.expenseBg : 'rgba(212, 175, 55, 0.12)' },
+                      styles.budgetHealthBadge,
+                      {
+                        backgroundColor:
+                          overBudgetCategoriesCount > 0
+                            ? colors.flow.expenseBg
+                            : 'rgba(16, 185, 129, 0.12)',
+                        borderColor:
+                          overBudgetCategoriesCount > 0
+                            ? colors.flow.expenseBorder
+                            : 'rgba(16, 185, 129, 0.25)',
+                      },
                     ]}
                   >
-                    <Text style={[styles.budgetPercentText, { color: barColor }]}>{percent}%</Text>
+                    <Text
+                      style={[
+                        styles.budgetHealthBadgeText,
+                        {
+                          color: overBudgetCategoriesCount > 0 ? colors.flow.expense : colors.flow.income,
+                        },
+                      ]}
+                    >
+                      {overBudgetCategoriesCount > 0
+                        ? `${overBudgetCategoriesCount} Over Limit`
+                        : 'Semua Terkontrol ✓'}
+                    </Text>
                   </View>
                 </View>
 
-                {/* Progress bar */}
+                {/* Overall Track */}
                 <View style={styles.progressTrack}>
                   <View
                     style={[
                       styles.progressBar,
-                      { width: `${Math.min(percent, 100)}%`, backgroundColor: barColor },
+                      {
+                        width: `${Math.min(
+                          totalBudgetLimit > 0 ? Math.round((totalBudgetSpent / totalBudgetLimit) * 100) : 0,
+                          100
+                        )}%`,
+                        backgroundColor:
+                          totalBudgetSpent > totalBudgetLimit
+                            ? colors.flow.expense
+                            : totalBudgetSpent >= totalBudgetLimit * 0.8
+                            ? colors.gold.primary
+                            : colors.flow.income,
+                      },
                     ]}
                   />
                 </View>
+              </View>
+            )}
 
-                {isOver && (
-                  <View style={styles.budgetOverRow}>
-                    <AlertTriangle size={12} color={colors.flow.expense} />
-                    <Text style={styles.budgetOverText}>
-                      Melebihi budget {formatRupiah(spent - budgetLimit)}
+            <View style={styles.sectionHeaderRow}>
+              <View>
+                <Text style={styles.sectionTitle}>Batas Anggaran Kategori</Text>
+                <Text style={styles.sectionSubtitle}>
+                  {budgetCount > 0 ? `${budgetCount} kategori aktif` : 'Kontrol batas belanja Anda'}
+                </Text>
+              </View>
+              <View style={styles.sectionActionsRow}>
+                <TouchableOpacity
+                  style={styles.secondaryActionBtn}
+                  onPress={() => {
+                    hapticSelection();
+                    router.push('/budgets');
+                  }}
+                >
+                  <Sliders size={12} color={colors.text.secondary} />
+                  <Text style={styles.secondaryActionText}>Kelola</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.primaryActionBtn}
+                  onPress={() => {
+                    hapticSelection();
+                    setIsBudgetModalOpen(true);
+                  }}
+                >
+                  <Plus size={12} color="#090A0E" />
+                  <Text style={styles.primaryActionText}>Atur</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {budgetCount === 0 ? (
+              <View style={styles.emptyContainer}>
+                <View style={styles.emptyIconCircle}>
+                  <Target size={24} color={colors.gold.champagne} />
+                </View>
+                <Text style={styles.emptyTitle}>Belum Ada Batas Anggaran</Text>
+                <Text style={styles.emptySubtitle}>
+                  Tentukan batas belanja bulanan untuk setiap kategori agar keuanganmu tetap aman dan hemat.
+                </Text>
+                <TouchableOpacity
+                  style={styles.emptyCtaBtn}
+                  onPress={() => {
+                    hapticSelection();
+                    setIsBudgetModalOpen(true);
+                  }}
+                >
+                  <Plus size={14} color="#090A0E" />
+                  <Text style={styles.emptyCtaText}>Atur Batas Anggaran</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              Object.entries(budgets).map(([catId, budgetLimit]) => {
+                const spent = categoryBreakdown.find((c) => c.id === catId)?.amount || 0;
+                const percent = budgetLimit > 0 ? Math.round((spent / budgetLimit) * 100) : 0;
+                const isOver = spent > budgetLimit;
+                const isWarning = percent >= 80 && !isOver;
+                const catObj = allCategories.find((c) => c.id === catId);
+                const catName = catObj?.name || categoryBreakdown.find((c) => c.id === catId)?.name || 'Kategori';
+                const catIcon = catObj?.icon;
+
+                const barColor = isOver
+                  ? colors.flow.expense
+                  : isWarning
+                  ? colors.gold.primary
+                  : colors.flow.income;
+
+                return (
+                  <View key={catId} style={styles.budgetCard}>
+                    <View style={styles.budgetTopRow}>
+                      <View style={styles.budgetLeft}>
+                        <View style={styles.catIconCircle}>
+                          {renderCategoryIcon(catIcon)}
+                        </View>
+                        <View>
+                          <Text style={styles.budgetName}>{catName}</Text>
+                          <Text style={styles.budgetSub}>
+                            {formatRupiah(spent)} dari {formatRupiah(budgetLimit)}
+                          </Text>
+                        </View>
+                      </View>
+                      <View
+                        style={[
+                          styles.budgetPercentBadge,
+                          {
+                            backgroundColor: isOver
+                              ? colors.flow.expenseBg
+                              : isWarning
+                              ? 'rgba(212, 175, 55, 0.15)'
+                              : 'rgba(16, 185, 129, 0.12)',
+                          },
+                        ]}
+                      >
+                        <Text style={[styles.budgetPercentText, { color: barColor }]}>{percent}%</Text>
+                      </View>
+                    </View>
+
+                    {/* Progress bar */}
+                    <View style={styles.progressTrack}>
+                      <View
+                        style={[
+                          styles.progressBar,
+                          { width: `${Math.min(percent, 100)}%`, backgroundColor: barColor },
+                        ]}
+                      />
+                    </View>
+
+                    {isOver ? (
+                      <View style={styles.budgetOverRow}>
+                        <AlertTriangle size={12} color={colors.flow.expense} />
+                        <Text style={styles.budgetOverText}>
+                          Melebihi budget {formatRupiah(spent - budgetLimit)}
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={styles.budgetRemainingRow}>
+                        <Text style={styles.budgetRemainingText}>
+                          Sisa kuota: {formatRupiah(budgetLimit - spent)}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                );
+              })
+            )}
+          </View>
+        )}
+
+        {/* 6. Tab 3: Tabungan Target (Goals) */}
+        {activeTab === 'goals' && (
+          <View style={styles.tabContentSection}>
+            {/* Goals Overview Banner */}
+            {goals.length > 0 && (
+              <View style={styles.budgetHealthCard}>
+                <View style={styles.budgetHealthTop}>
+                  <View>
+                    <Text style={styles.budgetHealthLabel}>TOTAL TARGET TERKUMPUL</Text>
+                    <Text style={styles.budgetHealthVal}>
+                      {formatRupiah(totalGoalsSaved)}{' '}
+                      <Text style={styles.budgetHealthLimit}>/ {formatRupiah(totalGoalsTarget)}</Text>
                     </Text>
                   </View>
-                )}
-              </View>
-            );
-          })
-        )}
-
-        {/* Expenses by Category Breakdown */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Pengeluaran per Kategori</Text>
-        </View>
-
-        {categoryBreakdown.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <View style={styles.emptyIconCircle}>
-              <PieChart size={24} color={colors.gold.champagne} />
-            </View>
-            <Text style={styles.emptyText}>Belum cukup data untuk menampilkan laporan.</Text>
-          </View>
-        ) : (
-          categoryBreakdown.map((item) => (
-            <View key={item.id} style={styles.categoryCard}>
-              <View style={styles.catHeader}>
-                <View style={styles.catLeft}>
-                  <View style={styles.catIconCircle}>
-                    {renderCategoryIcon(item.icon)}
-                  </View>
-                  <Text style={styles.catName}>{item.name}</Text>
-                </View>
-                <View style={styles.catRight}>
-                  <Text style={styles.catAmount}>-{formatRupiah(item.amount)}</Text>
-                  <View style={styles.catPercentBadge}>
-                    <Text style={styles.catPercentText}>{item.percentage}%</Text>
-                  </View>
-                </View>
-              </View>
-              {/* Progress Bar */}
-              <View style={styles.progressTrack}>
-                <View style={[styles.progressBar, { width: `${Math.min(item.percentage, 100)}%` }]} />
-              </View>
-            </View>
-          ))
-        )}
-
-        {/* Financial Goals / Tabungan Target (PRD Section 61) */}
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Tabungan Target (Goals)</Text>
-          <View style={{ flexDirection: 'row', gap: 6 }}>
-            <TouchableOpacity
-              style={styles.addBudgetBtn}
-              onPress={() => {
-                hapticSelection();
-                router.push('/goals');
-              }}
-            >
-              <Text style={styles.addBudgetText}>Lihat Semua</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.addBudgetBtn}
-              onPress={() => {
-                hapticSelection();
-                setIsAddGoalModalOpen(true);
-              }}
-            >
-              <Plus size={12} color={colors.gold.champagne} />
-              <Text style={styles.addBudgetText}>Tambah Goal</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {goals.length === 0 ? (
-          <View style={styles.emptyGoalCard}>
-            <View style={styles.emptyGoalIconCircle}>
-              <Target size={22} color={colors.gold.champagne} />
-            </View>
-            <Text style={styles.emptyGoalTitle}>Belum Ada Target Finansial</Text>
-            <Text style={styles.emptyGoalSubtitle}>
-              Mulai buat target impianmu seperti Dana Darurat, Liburan, atau Beli Gadget.
-            </Text>
-            <TouchableOpacity
-              style={styles.emptyGoalActionBtn}
-              onPress={() => {
-                hapticSelection();
-                setIsAddGoalModalOpen(true);
-              }}
-            >
-              <Text style={styles.emptyGoalActionText}>+ Buat Target Sekarang</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          goals.map((g) => {
-            const percent = g.targetAmount > 0 ? Math.min(Math.round((g.currentAmount / g.targetAmount) * 100), 100) : 0;
-            const isAchieved = g.status === 'achieved' || g.currentAmount >= g.targetAmount;
-
-            return (
-              <View key={g.id} style={styles.goalCard}>
-                <View style={styles.goalTopRow}>
-                  <View style={styles.goalHeaderLeft}>
-                    <View style={styles.goalEmojiCircle}>
-                      <Text style={styles.goalEmojiText}>{g.emoji || '🎯'}</Text>
-                    </View>
-                    <View style={styles.goalInfoCol}>
-                      <Text style={styles.goalTitle}>{g.name}</Text>
-                      <Text style={styles.goalSubText}>
-                        {formatRupiah(g.currentAmount)} dari {formatRupiah(g.targetAmount)}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.goalHeaderRight}>
-                    <View
-                      style={[
-                        styles.goalStatusBadge,
-                        isAchieved ? styles.goalBadgeAchieved : styles.goalBadgeActive,
-                      ]}
-                    >
-                      {isAchieved ? (
-                        <Text style={styles.goalBadgeAchievedText}>Tercapai 🎉</Text>
-                      ) : (
-                        <Text style={styles.goalBadgeActiveText}>{percent}%</Text>
-                      )}
-                    </View>
-                    <TouchableOpacity
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      onPress={() => handleDeleteGoal(g)}
-                      style={styles.goalDeleteBtn}
-                    >
-                      <Trash2 size={13} color={colors.text.muted} />
-                    </TouchableOpacity>
+                  <View style={styles.goalOverviewBadge}>
+                    <Trophy size={11} color={colors.gold.champagne} />
+                    <Text style={styles.goalOverviewBadgeText}>
+                      {achievedGoalsCount} dari {goals.length} tercapai
+                    </Text>
                   </View>
                 </View>
 
@@ -710,35 +930,151 @@ export default function ReportsScreen() {
                     style={[
                       styles.progressBar,
                       {
-                        width: `${percent}%`,
-                        backgroundColor: isAchieved ? '#10B981' : colors.gold.primary,
+                        width: `${Math.min(
+                          totalGoalsTarget > 0 ? Math.round((totalGoalsSaved / totalGoalsTarget) * 100) : 0,
+                          100
+                        )}%`,
+                        backgroundColor: colors.gold.primary,
                       },
                     ]}
                   />
                 </View>
-
-                {/* Bottom row: target date info & quick deposit action */}
-                <View style={styles.goalBottomRow}>
-                  <Text style={styles.goalDateText}>
-                    {g.targetDate ? `Target: ${g.targetDate}` : isAchieved ? 'Target tercapai!' : 'Target berjalan'}
-                  </Text>
-                  {!isAchieved && (
-                    <TouchableOpacity
-                      style={styles.goalDepositBtn}
-                      onPress={() => {
-                        hapticSelection();
-                        setSelectedGoalForDeposit(g);
-                        setIsDepositModalOpen(true);
-                      }}
-                    >
-                      <Plus size={11} color={colors.gold.champagne} />
-                      <Text style={styles.goalDepositBtnText}>Nabung</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
               </View>
-            );
-          })
+            )}
+
+            <View style={styles.sectionHeaderRow}>
+              <View>
+                <Text style={styles.sectionTitle}>Tabungan Impian (Goals)</Text>
+                <Text style={styles.sectionSubtitle}>
+                  {goals.length > 0 ? `${goals.length} target berjalan` : 'Capai impian finansialmu'}
+                </Text>
+              </View>
+              <View style={styles.sectionActionsRow}>
+                <TouchableOpacity
+                  style={styles.secondaryActionBtn}
+                  onPress={() => {
+                    hapticSelection();
+                    router.push('/goals');
+                  }}
+                >
+                  <Text style={styles.secondaryActionText}>Semua</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.primaryActionBtn}
+                  onPress={() => {
+                    hapticSelection();
+                    setIsAddGoalModalOpen(true);
+                  }}
+                >
+                  <Plus size={12} color="#090A0E" />
+                  <Text style={styles.primaryActionText}>Goal Baru</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {goals.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <View style={styles.emptyIconCircle}>
+                  <Trophy size={24} color={colors.gold.champagne} />
+                </View>
+                <Text style={styles.emptyTitle}>Belum Ada Target Finansial</Text>
+                <Text style={styles.emptySubtitle}>
+                  Mulai buat target impianmu seperti Dana Darurat, Liburan, atau Membeli Gadget.
+                </Text>
+                <TouchableOpacity
+                  style={styles.emptyCtaBtn}
+                  onPress={() => {
+                    hapticSelection();
+                    setIsAddGoalModalOpen(true);
+                  }}
+                >
+                  <Plus size={14} color="#090A0E" />
+                  <Text style={styles.emptyCtaText}>Buat Target Pertama</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              goals.map((g) => {
+                const percent =
+                  g.targetAmount > 0
+                    ? Math.min(Math.round((g.currentAmount / g.targetAmount) * 100), 100)
+                    : 0;
+                const isAchieved = g.status === 'achieved' || g.currentAmount >= g.targetAmount;
+
+                return (
+                  <View key={g.id} style={styles.goalCard}>
+                    <View style={styles.goalTopRow}>
+                      <View style={styles.goalHeaderLeft}>
+                        <View style={styles.goalEmojiCircle}>
+                          <Text style={styles.goalEmojiText}>{g.emoji || '🎯'}</Text>
+                        </View>
+                        <View style={styles.goalInfoCol}>
+                          <Text style={styles.goalTitle}>{g.name}</Text>
+                          <Text style={styles.goalSubText}>
+                            {formatRupiah(g.currentAmount)} dari {formatRupiah(g.targetAmount)}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.goalHeaderRight}>
+                        <View
+                          style={[
+                            styles.goalStatusBadge,
+                            isAchieved ? styles.goalBadgeAchieved : styles.goalBadgeActive,
+                          ]}
+                        >
+                          {isAchieved ? (
+                            <Text style={styles.goalBadgeAchievedText}>Tercapai 🎉</Text>
+                          ) : (
+                            <Text style={styles.goalBadgeActiveText}>{percent}%</Text>
+                          )}
+                        </View>
+                        <TouchableOpacity
+                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                          onPress={() => handleDeleteGoal(g)}
+                          style={styles.goalDeleteBtn}
+                        >
+                          <Trash2 size={13} color={colors.text.muted} />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    {/* Progress bar */}
+                    <View style={styles.progressTrack}>
+                      <View
+                        style={[
+                          styles.progressBar,
+                          {
+                            width: `${percent}%`,
+                            backgroundColor: isAchieved ? '#10B981' : colors.gold.primary,
+                          },
+                        ]}
+                      />
+                    </View>
+
+                    {/* Bottom row: target date info & quick deposit action */}
+                    <View style={styles.goalBottomRow}>
+                      <Text style={styles.goalDateText}>
+                        {g.targetDate ? `Target: ${g.targetDate}` : isAchieved ? 'Target tercapai!' : 'Target berjalan'}
+                      </Text>
+                      {!isAchieved && (
+                        <TouchableOpacity
+                          style={styles.goalDepositBtn}
+                          onPress={() => {
+                            hapticSelection();
+                            setSelectedGoalForDeposit(g);
+                            setIsDepositModalOpen(true);
+                          }}
+                        >
+                          <Plus size={11} color={colors.gold.champagne} />
+                          <Text style={styles.goalDepositBtnText}>Nabung</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+                );
+              })
+            )}
+          </View>
         )}
       </ScrollView>
 
@@ -956,7 +1292,7 @@ export default function ReportsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.bg.base,
@@ -965,18 +1301,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 10,
+    backgroundColor: colors.bg.base,
   },
   headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   headerTitle: {
     fontSize: 22,
     fontWeight: '700',
     color: colors.text.primary,
     letterSpacing: -0.4,
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: colors.text.muted,
+    marginTop: 1,
   },
   headerActions: {
     flexDirection: 'row',
@@ -987,9 +1329,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 5,
     borderRadius: 8,
-    backgroundColor: 'rgba(212, 175, 55, 0.12)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.12)' : 'rgba(180, 83, 9, 0.1)',
     borderWidth: 0.5,
-    borderColor: 'rgba(212, 175, 55, 0.25)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.25)' : 'rgba(180, 83, 9, 0.2)',
   },
   todayBtnText: {
     fontSize: 11,
@@ -1003,9 +1345,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
-    backgroundColor: 'rgba(212, 175, 55, 0.15)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.15)' : 'rgba(180, 83, 9, 0.1)',
     borderWidth: 0.5,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.3)' : 'rgba(180, 83, 9, 0.25)',
   },
   exportBtnText: {
     fontSize: 11,
@@ -1016,17 +1358,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     borderRadius: 14,
     paddingHorizontal: 8,
-    paddingVertical: 7,
+    paddingVertical: 6,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.06)',
   },
   navBtn: {
     padding: 6,
     borderRadius: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0, 0, 0, 0.04)',
   },
   periodCenter: {
     flexDirection: 'row',
@@ -1039,47 +1381,96 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     letterSpacing: -0.2,
   },
+  currentMonthDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.flow.income,
+    marginLeft: 2,
+  },
   container: {
     flex: 1,
   },
   content: {
     paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 28,
+    paddingTop: 8,
+    paddingBottom: 32,
   },
+
+  // Summary Card
   summaryCard: {
-    backgroundColor: '#12141D',
-    borderRadius: 20,
+    backgroundColor: colors.bg.surface,
+    borderRadius: 22,
     padding: 18,
     borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.22)',
-    marginBottom: 20,
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.22)' : 'rgba(180, 83, 9, 0.2)',
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: isDark ? 0 : 0.04,
+    shadowRadius: 8,
+    elevation: isDark ? 0 : 2,
   },
-  cardSectionLabel: {
+  summaryTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16,
+  },
+  summarySectionLabel: {
     fontSize: 10,
     fontWeight: '700',
     color: colors.gold.champagne,
     letterSpacing: 0.8,
-    marginBottom: 14,
+    marginBottom: 4,
   },
-  flowRow: {
+  netCashFlowValue: {
+    fontSize: 24,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -0.5,
+  },
+  netStatusBadge: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
-    borderRadius: 16,
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 0.5,
+  },
+  netStatusText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  netStatusTextMuted: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.text.muted,
+  },
+  flowSplitRow: {
+    flexDirection: 'row',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.03)' : colors.bg.elevated,
+    borderRadius: 14,
     paddingVertical: 12,
     paddingHorizontal: 14,
     alignItems: 'center',
-    marginBottom: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.06)' : colors.border.subtle,
+    marginBottom: 12,
   },
-  flowCol: {
+  flowBox: {
     flex: 1,
-    paddingRight: 12,
+    paddingRight: 10,
   },
-  flowColRight: {
+  flowBoxRight: {
     paddingRight: 0,
-    paddingLeft: 12,
+    paddingLeft: 10,
+  },
+  flowBoxDivider: {
+    width: 1,
+    height: 32,
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : colors.border.subtle,
   },
   flowHeaderRow: {
     flexDirection: 'row',
@@ -1091,11 +1482,9 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 0.5,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   flowLabel: {
     fontSize: 11,
@@ -1103,55 +1492,139 @@ const styles = StyleSheet.create({
     color: colors.text.muted,
   },
   flowValue: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-  flowDivider: {
-    width: 1,
-    height: 28,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  ratioSection: {
+    marginTop: 2,
+    marginBottom: 6,
+  },
+  ratioBarContainer: {
+    flexDirection: 'row',
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : colors.bg.elevated,
+    marginBottom: 8,
+  },
+  ratioBarIncome: {
+    backgroundColor: colors.flow.income,
+  },
+  ratioBarExpense: {
+    backgroundColor: colors.flow.expense,
+  },
+  ratioLegendRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  ratioLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  ratioDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  ratioLegendText: {
+    fontSize: 10.5,
+    color: colors.text.muted,
+    fontWeight: '500',
+  },
+  savingsRateBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.12)' : 'rgba(180, 83, 9, 0.1)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  savingsRateText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.gold.champagne,
   },
   feeNoticeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 6,
+    alignItems: 'center',
+    paddingTop: 8,
+    marginTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: isDark ? 'rgba(255, 255, 255, 0.05)' : colors.border.subtle,
   },
   feeNoticeText: {
-    fontSize: 12,
+    fontSize: 11,
     color: colors.text.muted,
   },
   feeNoticeVal: {
-    fontSize: 12,
-    color: colors.text.secondary,
+    fontSize: 11,
     fontWeight: '600',
   },
-  netCashFlowBanner: {
+
+  // Segmented Switcher
+  segmentContainer: {
+    flexDirection: 'row',
+    backgroundColor: isDark ? '#12141D' : colors.bg.elevated,
+    borderRadius: 14,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.07)' : colors.border.subtle,
+    marginBottom: 16,
+  },
+  segmentTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    borderRadius: 11,
+    gap: 5,
+  },
+  segmentTabActive: {
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.16)' : 'rgba(180, 83, 9, 0.12)',
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.45)' : 'rgba(180, 83, 9, 0.35)',
+  },
+  segmentTabText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.text.muted,
+  },
+  segmentTabTextActive: {
+    color: colors.gold.champagne,
+    fontWeight: '700',
+  },
+  segmentBadge: {
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 6,
+  },
+  segmentBadgeActive: {
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.25)' : 'rgba(180, 83, 9, 0.2)',
+  },
+  segmentBadgeText: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: colors.text.muted,
+  },
+  segmentBadgeTextActive: {
+    color: colors.gold.champagne,
+  },
+
+  // Tab Content & Sections
+  tabContentSection: {
+    marginBottom: 10,
+  },
+  sectionHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 9,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    marginTop: 4,
-  },
-  netCashFlowLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  netCashFlowLabel: {
-    fontSize: 12,
-    color: colors.text.secondary,
-    fontWeight: '500',
-  },
-  netCashFlowValue: {
-    fontSize: 13,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  sectionHeader: {
     marginBottom: 12,
   },
   sectionTitle: {
@@ -1160,45 +1633,107 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     letterSpacing: -0.2,
   },
-  categoryCard: {
-    backgroundColor: '#12141D',
-    padding: 14,
-    borderRadius: 18,
-    marginBottom: 10,
+  sectionSubtitle: {
+    fontSize: 11,
+    color: colors.text.muted,
+    marginTop: 2,
+  },
+  sectionActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  primaryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.gold.primary,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  primaryActionText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#090A0E',
+  },
+  secondaryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : colors.bg.surface,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : colors.border.subtle,
+  },
+  secondaryActionText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.text.secondary,
+  },
+
+  // Category Cards
+  categoryCard: {
+    backgroundColor: colors.bg.surface,
+    padding: 13,
+    borderRadius: 16,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: isDark ? 0 : 0.03,
+    shadowRadius: 4,
+    elevation: isDark ? 0 : 1,
   },
   catHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   catLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
     flex: 1,
+  },
+  catRankBadge: {
+    width: 20,
+    alignItems: 'center',
+  },
+  catRankText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.text.muted,
   },
   catIconCircle: {
     width: 32,
     height: 32,
     borderRadius: 10,
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.1)' : 'rgba(180, 83, 9, 0.1)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 0.5,
-    borderColor: 'rgba(239, 68, 68, 0.25)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.25)' : 'rgba(180, 83, 9, 0.2)',
+  },
+  catNameCol: {
+    flex: 1,
   },
   catName: {
     fontSize: 13,
     fontWeight: '600',
     color: colors.text.primary,
   },
+  catShareText: {
+    fontSize: 10.5,
+    color: colors.text.muted,
+    marginTop: 1,
+  },
   catRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    alignItems: 'flex-end',
   },
   catAmount: {
     fontSize: 13,
@@ -1206,104 +1741,83 @@ const styles = StyleSheet.create({
     color: colors.flow.expense,
     fontVariant: ['tabular-nums'],
   },
-  catPercentBadge: {
-    backgroundColor: 'rgba(239, 68, 68, 0.12)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 0.5,
-    borderColor: 'rgba(239, 68, 68, 0.25)',
-  },
-  catPercentText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: colors.flow.expense,
-  },
   progressTrack: {
-    height: 6,
-    backgroundColor: '#1E2230',
-    borderRadius: 3,
+    height: 5,
+    backgroundColor: isDark ? '#1A1D27' : colors.bg.elevated,
+    borderRadius: 2.5,
     overflow: 'hidden',
   },
   progressBar: {
     height: '100%',
-    backgroundColor: colors.flow.expense,
-    borderRadius: 3,
+    borderRadius: 2.5,
   },
-  emptyContainer: {
-    padding: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#12141D',
-    borderRadius: 18,
+
+  // Budgets Health & Cards
+  budgetHealthCard: {
+    backgroundColor: colors.bg.surface,
+    borderRadius: 16,
+    padding: 14,
     borderWidth: 1,
-    borderColor: colors.border.subtle,
-    gap: 10,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
+    marginBottom: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: isDark ? 0 : 0.03,
+    shadowRadius: 4,
+    elevation: isDark ? 0 : 1,
   },
-  emptyIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(212, 175, 55, 0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
-    borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.16)',
-  },
-  emptyText: {
-    color: colors.text.muted,
-    fontSize: 13,
-    textAlign: 'center',
-  },
-  sectionHeaderRow: {
+  budgetHealthTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
   },
-  addBudgetBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    backgroundColor: 'rgba(212, 175, 55, 0.12)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(212, 175, 55, 0.25)',
-  },
-  addBudgetText: {
-    fontSize: 11,
+  budgetHealthLabel: {
+    fontSize: 9.5,
     fontWeight: '700',
-    color: colors.gold.champagne,
+    color: colors.text.muted,
+    letterSpacing: 0.6,
+    marginBottom: 3,
   },
-  emptyBudgetCard: {
-    padding: 16,
-    borderRadius: 14,
-    backgroundColor: '#12141D',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
-    marginBottom: 16,
-    alignItems: 'center',
+  budgetHealthVal: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.text.primary,
+    fontVariant: ['tabular-nums'],
   },
-  emptyBudgetText: {
+  budgetHealthLimit: {
     fontSize: 12,
+    fontWeight: '500',
     color: colors.text.muted,
   },
+  budgetHealthBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 7,
+    borderWidth: 0.5,
+  },
+  budgetHealthBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+  },
   budgetCard: {
-    backgroundColor: '#12141D',
-    padding: 14,
-    borderRadius: 18,
-    marginBottom: 10,
+    backgroundColor: colors.bg.surface,
+    padding: 13,
+    borderRadius: 16,
+    marginBottom: 9,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.07)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: isDark ? 0 : 0.03,
+    shadowRadius: 4,
+    elevation: isDark ? 0 : 1,
   },
   budgetTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 9,
   },
   budgetLeft: {
     flexDirection: 'row',
@@ -1324,7 +1838,7 @@ const styles = StyleSheet.create({
   },
   budgetPercentBadge: {
     paddingHorizontal: 7,
-    paddingVertical: 3,
+    paddingVertical: 2,
     borderRadius: 6,
   },
   budgetPercentText: {
@@ -1336,40 +1850,224 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginTop: 8,
+    marginTop: 7,
   },
   budgetOverText: {
     fontSize: 11,
     fontWeight: '700',
     color: colors.flow.expense,
   },
+  budgetRemainingRow: {
+    marginTop: 6,
+  },
+  budgetRemainingText: {
+    fontSize: 10.5,
+    color: colors.text.muted,
+    fontVariant: ['tabular-nums'],
+  },
+
+  // Goals Overview & Cards
+  goalOverviewBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.12)' : 'rgba(180, 83, 9, 0.1)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  goalOverviewBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: colors.gold.champagne,
+  },
+  goalCard: {
+    backgroundColor: colors.bg.surface,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: isDark ? 0 : 0.03,
+    shadowRadius: 4,
+    elevation: isDark ? 0 : 1,
+  },
+  goalTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  goalHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  goalEmojiCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.1)' : 'rgba(180, 83, 9, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  goalEmojiText: {
+    fontSize: 17,
+  },
+  goalInfoCol: {
+    flex: 1,
+  },
+  goalTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.text.primary,
+    letterSpacing: -0.2,
+  },
+  goalSubText: {
+    fontSize: 11,
+    color: colors.text.muted,
+    marginTop: 2,
+    fontVariant: ['tabular-nums'],
+  },
+  goalHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  goalStatusBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 7,
+  },
+  goalBadgeActive: {
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.12)' : 'rgba(180, 83, 9, 0.1)',
+  },
+  goalBadgeActiveText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: colors.gold.champagne,
+    fontVariant: ['tabular-nums'],
+  },
+  goalBadgeAchieved: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+  },
+  goalBadgeAchievedText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#10B981',
+  },
+  goalDeleteBtn: {
+    padding: 4,
+  },
+  goalBottomRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 9,
+  },
+  goalDateText: {
+    fontSize: 10,
+    color: colors.text.muted,
+  },
+  goalDepositBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 7,
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.15)' : 'rgba(180, 83, 9, 0.1)',
+    borderWidth: 0.5,
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.3)' : 'rgba(180, 83, 9, 0.25)',
+  },
+  goalDepositBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.gold.champagne,
+  },
+
+  // Empty State
+  emptyContainer: {
+    paddingVertical: 36,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.bg.surface,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.06)',
+  },
+  emptyIconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.08)' : 'rgba(180, 83, 9, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.18)' : 'rgba(180, 83, 9, 0.15)',
+  },
+  emptyTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.text.primary,
+    marginBottom: 5,
+  },
+  emptySubtitle: {
+    fontSize: 12,
+    color: colors.text.muted,
+    textAlign: 'center',
+    lineHeight: 18,
+    maxWidth: 280,
+  },
+  emptyCtaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.gold.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 10,
+    marginTop: 14,
+  },
+  emptyCtaText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#090A0E',
+  },
+
+  // Modals
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(9, 10, 14, 0.75)',
+    backgroundColor: isDark ? 'rgba(9, 10, 14, 0.75)' : 'rgba(15, 23, 42, 0.45)',
     justifyContent: 'flex-end',
   },
   modalDismissOverlay: {
     ...StyleSheet.absoluteFill,
   },
   modalContent: {
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    paddingHorizontal: 22,
+    paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 36,
     borderTopWidth: 1,
     borderLeftWidth: 1,
     borderRightWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.3)' : 'rgba(180, 83, 9, 0.25)',
   },
   modalHandle: {
-    width: 40,
+    width: 38,
     height: 4,
     borderRadius: 2,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.15)',
     alignSelf: 'center',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1378,18 +2076,18 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: colors.text.primary,
     letterSpacing: -0.3,
   },
   modalCloseBtn: {
     padding: 6,
-    borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 12,
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
   },
   inputGroup: {
-    marginBottom: 16,
+    marginBottom: 14,
   },
   inputLabel: {
     fontSize: 10,
@@ -1405,10 +2103,10 @@ const styles = StyleSheet.create({
   catPill: {
     paddingVertical: 7,
     paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: '#090A0E',
+    borderRadius: 10,
+    backgroundColor: isDark ? '#090A0E' : colors.bg.elevated,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : colors.border.subtle,
   },
   catPillSelected: {
     backgroundColor: colors.gold.champagne,
@@ -1424,171 +2122,26 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   textInput: {
-    backgroundColor: '#090A0E',
-    borderRadius: 14,
+    backgroundColor: isDark ? '#090A0E' : colors.bg.elevated,
+    borderRadius: 12,
     paddingHorizontal: 14,
-    height: 48,
+    height: 46,
     color: colors.text.primary,
     fontSize: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : colors.border.subtle,
   },
   saveBudgetBtn: {
-    height: 50,
-    borderRadius: 16,
+    height: 48,
+    borderRadius: 14,
     backgroundColor: colors.gold.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 6,
+    marginTop: 8,
   },
   saveBudgetBtnText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#090A0E',
-  },
-  emptyGoalCard: {
-    backgroundColor: '#12141D',
-    borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
-  },
-  emptyGoalIconCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(212, 175, 55, 0.12)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
-  emptyGoalTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: colors.text.primary,
-    marginBottom: 4,
-  },
-  emptyGoalSubtitle: {
-    fontSize: 12,
-    color: colors.text.muted,
-    textAlign: 'center',
-    lineHeight: 18,
-    marginBottom: 14,
-  },
-  emptyGoalActionBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: colors.gold.primary,
-  },
-  emptyGoalActionText: {
-    fontSize: 12,
-    fontWeight: '700',
     color: '#090A0E',
-  },
-  goalCard: {
-    backgroundColor: '#12141D',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
-  },
-  goalTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  goalHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  goalEmojiCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: 'rgba(212, 175, 55, 0.1)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  goalEmojiText: {
-    fontSize: 18,
-  },
-  goalInfoCol: {
-    flex: 1,
-  },
-  goalTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.text.primary,
-    letterSpacing: -0.2,
-  },
-  goalSubText: {
-    fontSize: 11,
-    color: colors.text.muted,
-    marginTop: 2,
-    fontVariant: ['tabular-nums'],
-  },
-  goalHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  goalStatusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  goalBadgeActive: {
-    backgroundColor: 'rgba(212, 175, 55, 0.12)',
-  },
-  goalBadgeActiveText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.gold.champagne,
-    fontVariant: ['tabular-nums'],
-  },
-  goalBadgeAchieved: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-  },
-  goalBadgeAchievedText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#10B981',
-  },
-  goalDeleteBtn: {
-    padding: 4,
-  },
-  goalBottomRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  goalDateText: {
-    fontSize: 10,
-    color: colors.text.muted,
-    fontStyle: 'italic',
-  },
-  goalDepositBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    backgroundColor: 'rgba(212, 175, 55, 0.15)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
-  },
-  goalDepositBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.gold.champagne,
   },
 });

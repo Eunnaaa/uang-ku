@@ -680,6 +680,7 @@ const styles = StyleSheet.create({
     padding: 4,
     borderWidth: 1,
     borderColor: colors.border.subtle,
+    marginBottom: 14,
   },
   tabBtn: {
     flex: 1,
@@ -714,6 +715,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border.subtle,
     gap: 8,
+    marginBottom: 14,
   },
   searchInput: {
     flex: 1,
