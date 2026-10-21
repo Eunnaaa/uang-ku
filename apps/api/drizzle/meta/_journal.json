@@ -8,6 +8,20 @@
       "when": 1791358648353,
       "tag": "0000_first_meteorite",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792584184112,
+      "tag": "0001_steady_dust",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792584208882,
+      "tag": "0002_violet_misty_knight",
+      "breakpoints": true
     }
   ]
 }

@@ -9,10 +9,35 @@ import {
   type RecurringFrequency,
   type TemplateModel,
   type TemplatePayload,
+  type PocketModel,
+  type PocketType,
+  type BankConnectionModel,
+  type BankMutationModel,
 } from '@uangku/contracts';
-export type { GoalModel, RecurringRuleModel, RecurringFrequency, TemplateModel, TemplatePayload };
+export type {
+  GoalModel,
+  RecurringRuleModel,
+  RecurringFrequency,
+  TemplateModel,
+  TemplatePayload,
+  PocketModel,
+  PocketType,
+  BankConnectionModel,
+  BankMutationModel,
+};
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
+let currentActiveUserId = '00000000-0000-0000-0000-000000000001';
+
+export function getActiveUserId(): string {
+  return currentActiveUserId;
+}
+
+export function setActiveUserId(userId: string): void {
+  if (userId && typeof userId === 'string') {
+    currentActiveUserId = userId;
+  }
+}
 
 export async function getDb(): Promise<SQLite.SQLiteDatabase> {
   if (!dbInstance) {
@@ -146,7 +171,94 @@ export async function initLocalDatabase(db: SQLite.SQLiteDatabase): Promise<void
     );
 
     CREATE INDEX IF NOT EXISTS idx_templates_use ON local_templates(use_count DESC, sort_order ASC);
+
+    CREATE TABLE IF NOT EXISTS local_budgets (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      category_id TEXT NOT NULL UNIQUE,
+      amount INTEGER NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'IDR',
+      period TEXT NOT NULL DEFAULT 'monthly',
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_budgets_user_cat ON local_budgets(user_id, category_id, is_active);
+
+    CREATE TABLE IF NOT EXISTS local_pockets (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      emoji TEXT,
+      type TEXT NOT NULL CHECK (type IN ('spending', 'saving', 'locked', 'bills')),
+      allocated_balance INTEGER NOT NULL DEFAULT 0,
+      target_amount INTEGER,
+      is_locked INTEGER NOT NULL DEFAULT 0,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pockets_acc ON local_pockets(account_id);
+
+    CREATE TABLE IF NOT EXISTS local_bank_connections (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      institution_code TEXT NOT NULL,
+      masked_account_number TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      last_synced_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS local_bank_mutations (
+      id TEXT PRIMARY KEY,
+      connection_id TEXT NOT NULL,
+      external_id TEXT UNIQUE NOT NULL,
+      amount INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      description TEXT NOT NULL,
+      transaction_time TEXT NOT NULL,
+      reconciliation_status TEXT NOT NULL DEFAULT 'pending',
+      matched_transaction_id TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bank_mut_conn ON local_bank_mutations(connection_id, reconciliation_status);
   `);
+
+  // Migration for pocket_id on local_transactions (PRD Section 79.3)
+  try {
+    await db.execAsync(`ALTER TABLE local_transactions ADD COLUMN pocket_id TEXT;`);
+  } catch {
+    // Column already exists
+  }
+
+  // Migrate legacy budgets from sync_metadata if local_budgets is empty
+  try {
+    const budgetCount = await db.getFirstAsync<{ count: number }>('SELECT count(*) as count FROM local_budgets;');
+    if (!budgetCount || budgetCount.count === 0) {
+      const metaRow = await db.getFirstAsync<{ value: string }>(`SELECT value FROM sync_metadata WHERE key = 'budgets_v1';`);
+      if (metaRow?.value) {
+        const oldBudgets = JSON.parse(metaRow.value);
+        const now = new Date().toISOString();
+        for (const [catId, limit] of Object.entries(oldBudgets)) {
+          if (typeof limit === 'number' && limit > 0) {
+            await db.runAsync(
+              `INSERT OR REPLACE INTO local_budgets (id, user_id, category_id, amount, currency, period, is_active, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'IDR', 'monthly', 1, ?, ?);`,
+              [crypto.randomUUID(), currentActiveUserId, catId, limit, now, now]
+            );
+          }
+        }
+      }
+    }
+  } catch {}
 
   // Migration for reserved_amount if missing
   try {
@@ -222,6 +334,12 @@ export async function clearAllLocalTransactions(): Promise<void> {
     DELETE FROM mutation_outbox;
     DELETE FROM local_goals;
     DELETE FROM local_recurring_rules;
+    DELETE FROM local_templates;
+    DELETE FROM local_budgets;
+    DELETE FROM local_pockets;
+    DELETE FROM local_bank_connections;
+    DELETE FROM local_bank_mutations;
+    DELETE FROM sync_metadata;
     UPDATE local_accounts SET initial_balance = 0, reserved_amount = 0;
   `);
 }
@@ -234,11 +352,19 @@ export async function getLocalTransactions(filter?: { type?: string; accountId?:
       t.*,
       a.name as account_name, a.type as account_type,
       da.name as dest_account_name, da.type as dest_account_type,
-      c.name as category_name, c.icon as category_icon
+      c.name as category_name, c.icon as category_icon,
+      p.name as pocket_name, p.emoji as pocket_emoji, p.type as pocket_type,
+      CASE WHEN bm.matched_transaction_id IS NOT NULL THEN 1 ELSE 0 END as is_bank_verified
     FROM local_transactions t
     LEFT JOIN local_accounts a ON a.id = t.account_id
     LEFT JOIN local_accounts da ON da.id = t.destination_account_id
     LEFT JOIN local_categories c ON c.id = t.category_id
+    LEFT JOIN local_pockets p ON p.id = t.pocket_id
+    LEFT JOIN (
+      SELECT DISTINCT matched_transaction_id 
+      FROM local_bank_mutations 
+      WHERE reconciliation_status IN ('matched', 'created_as_new') AND matched_transaction_id IS NOT NULL
+    ) bm ON bm.matched_transaction_id = t.id
     WHERE t.deleted_at IS NULL
   `;
   const params: any[] = [];
@@ -261,6 +387,7 @@ export async function getLocalTransactions(filter?: { type?: string; accountId?:
     accountId: r.account_id,
     destinationAccountId: r.destination_account_id,
     categoryId: r.category_id,
+    pocketId: r.pocket_id || null,
     type: r.type,
     amount: r.amount,
     transferFee: r.transfer_fee || 0,
@@ -277,6 +404,8 @@ export async function getLocalTransactions(filter?: { type?: string; accountId?:
     account: r.account_name ? { id: r.account_id, name: r.account_name, type: r.account_type } : undefined,
     destinationAccount: r.dest_account_name ? { id: r.destination_account_id, name: r.dest_account_name, type: r.dest_account_type } : null,
     category: r.type === 'transfer' ? { id: 'transfer', name: 'Transfer Antar Akun', icon: 'repeat' } : (r.category_name ? { id: r.category_id, name: r.category_name, icon: r.category_icon } : null),
+    pocket: r.pocket_name ? { id: r.pocket_id, name: r.pocket_name, emoji: r.pocket_emoji, type: r.pocket_type } : null,
+    isBankVerified: Boolean(r.is_bank_verified),
   }));
 }
 
@@ -284,6 +413,7 @@ export async function insertLocalTransaction(tx: {
   accountId: string;
   destinationAccountId?: string | null;
   categoryId?: string | null;
+  pocketId?: string | null;
   type: 'income' | 'expense' | 'transfer';
   amount: number;
   transferFee?: number;
@@ -300,20 +430,30 @@ export async function insertLocalTransaction(tx: {
   const currency = tx.currency || 'IDR';
   const fee = tx.transferFee || 0;
   const receipt = tx.receiptUrl || null;
+  const pocketId = tx.pocketId || null;
 
   await db.withTransactionAsync(async () => {
     // 1. Insert local transaction with pending_sync
     await db.runAsync(
-      `INSERT INTO local_transactions (id, user_id, account_id, destination_account_id, category_id, type, amount, transfer_fee, currency, note, receipt_url, transaction_date, client_id, version, sync_status, created_at, updated_at)
-       VALUES (?, '00000000-0000-0000-0000-000000000001', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'pending_sync', ?, ?);`,
-      [id, tx.accountId, tx.destinationAccountId || null, tx.categoryId || null, tx.type, tx.amount, fee, currency, tx.note || null, receipt, txDate, clientId, now, now]
+      `INSERT INTO local_transactions (id, user_id, account_id, destination_account_id, category_id, pocket_id, type, amount, transfer_fee, currency, note, receipt_url, transaction_date, client_id, version, sync_status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'pending_sync', ?, ?);`,
+      [id, currentActiveUserId, tx.accountId, tx.destinationAccountId || null, tx.categoryId || null, pocketId, tx.type, tx.amount, fee, currency, tx.note || null, receipt, txDate, clientId, now, now]
     );
 
-    // 2. Insert into mutation outbox
+    // 2. If pocket specified and type is expense, deduct from pocket allocated balance
+    if (pocketId && tx.type === 'expense') {
+      await db.runAsync(
+        `UPDATE local_pockets SET allocated_balance = MAX(0, allocated_balance - ?), updated_at = ? WHERE id = ?;`,
+        [tx.amount, now, pocketId]
+      );
+    }
+
+    // 3. Insert into mutation outbox
     const payload = JSON.stringify({
       accountId: tx.accountId,
       destinationAccountId: tx.destinationAccountId || null,
       categoryId: tx.categoryId || null,
+      pocketId,
       type: tx.type,
       amount: tx.amount,
       transferFee: fee,
@@ -340,6 +480,18 @@ export async function deleteLocalTransaction(id: string): Promise<void> {
   const now = new Date().toISOString();
 
   await db.withTransactionAsync(async () => {
+    // If transaction had a pocket and was an expense, restore the allocated balance
+    const existingTx = await db.getFirstAsync<{ pocket_id: string | null; type: string; amount: number }>(
+      `SELECT pocket_id, type, amount FROM local_transactions WHERE id = ?;`,
+      [id]
+    );
+    if (existingTx?.pocket_id && existingTx.type === 'expense') {
+      await db.runAsync(
+        `UPDATE local_pockets SET allocated_balance = allocated_balance + ?, updated_at = ? WHERE id = ?;`,
+        [existingTx.amount, now, existingTx.pocket_id]
+      );
+    }
+
     await db.runAsync(`UPDATE local_transactions SET deleted_at = ?, sync_status = 'pending_sync', updated_at = ? WHERE id = ?;`, [now, now, id]);
 
     await db.runAsync(
@@ -576,8 +728,8 @@ export async function insertLocalAccount(acc: {
 
   await db.runAsync(
     `INSERT INTO local_accounts (id, user_id, name, type, currency, initial_balance, reserved_amount, is_default, is_archived, created_at, updated_at)
-     VALUES (?, '00000000-0000-0000-0000-000000000001', ?, ?, ?, ?, ?, 0, 0, ?, ?);`,
-    [id, acc.name, acc.type, currency, initial, reserved, now, now]
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?);`,
+    [id, currentActiveUserId, acc.name, acc.type, currency, initial, reserved, now, now]
   );
 
   const accounts = await getLocalAccounts();
@@ -662,8 +814,8 @@ export async function insertLocalCategory(cat: {
 
   await db.runAsync(
     `INSERT INTO local_categories (id, user_id, name, type, icon, is_system, is_archived, created_at, updated_at)
-     VALUES (?, '00000000-0000-0000-0000-000000000001', ?, ?, ?, 0, 0, ?, ?);`,
-    [id, cat.name, cat.type, icon, now, now]
+     VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?);`,
+    [id, currentActiveUserId, cat.name, cat.type, icon, now, now]
   );
 
   const list = await getLocalCategories();
@@ -718,26 +870,27 @@ export async function getLocalDashboardSummary(month: string) {
 
 export async function getLocalBudgets(): Promise<Record<string, number>> {
   const db = await getDb();
-  const row = await db.getFirstAsync<{ value: string }>(`SELECT value FROM sync_metadata WHERE key = 'budgets_v1';`);
-  if (!row) {
-    return {};
+  const rows = await db.getAllAsync<{ category_id: string; amount: number }>(
+    `SELECT category_id, amount FROM local_budgets WHERE is_active = 1;`
+  );
+  const result: Record<string, number> = {};
+  for (const r of rows) {
+    result[r.category_id] = r.amount;
   }
-  try {
-    return JSON.parse(row.value);
-  } catch {
-    return {};
-  }
+  return result;
 }
 
 export async function saveLocalBudget(categoryId: string, limit: number): Promise<void> {
   const db = await getDb();
-  const current = await getLocalBudgets();
-  current[categoryId] = limit;
   const now = new Date().toISOString();
   await db.runAsync(
-    `INSERT INTO sync_metadata (key, value, updated_at) VALUES ('budgets_v1', ?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;`,
-    [JSON.stringify(current), now]
+    `INSERT INTO local_budgets (id, user_id, category_id, amount, currency, period, is_active, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'IDR', 'monthly', 1, ?, ?)
+     ON CONFLICT(category_id) DO UPDATE SET 
+       amount = excluded.amount, 
+       is_active = 1,
+       updated_at = excluded.updated_at;`,
+    [crypto.randomUUID(), currentActiveUserId, categoryId, limit, now, now]
   );
 }
 
@@ -775,8 +928,8 @@ export async function insertLocalGoal(goal: {
 
   await db.runAsync(
     `INSERT INTO local_goals (id, user_id, name, emoji, target_amount, current_amount, target_date, status, created_at, updated_at)
-     VALUES (?, '00000000-0000-0000-0000-000000000001', ?, ?, ?, ?, ?, ?, ?, ?);`,
-    [id, goal.name, goal.emoji || '🎯', goal.targetAmount, currentAmount, goal.targetDate || null, status, now, now]
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+    [id, currentActiveUserId, goal.name, goal.emoji || '🎯', goal.targetAmount, currentAmount, goal.targetDate || null, status, now, now]
   );
 
   const goals = await getLocalGoals();
@@ -1047,8 +1200,8 @@ export async function insertLocalRecurringRule(rule: {
 
   await db.runAsync(
     `INSERT INTO local_recurring_rules (id, user_id, account_id, category_id, type, amount, frequency, note, next_due_date, is_active, created_at, updated_at)
-     VALUES (?, '00000000-0000-0000-0000-000000000001', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?);`,
-    [id, rule.accountId, rule.categoryId || null, rule.type, rule.amount, rule.frequency, rule.note || null, dueDate, now, now]
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?);`,
+    [id, currentActiveUserId, rule.accountId, rule.categoryId || null, rule.type, rule.amount, rule.frequency, rule.note || null, dueDate, now, now]
   );
 
   const list = await getLocalRecurringRules();
@@ -1136,13 +1289,13 @@ export async function insertLocalTemplate(t: {
 
   await db.runAsync(
     `INSERT INTO local_templates (id, user_id, name, template_payload, sort_order, use_count, created_at, updated_at)
-     VALUES (?, '00000000-0000-0000-0000-000000000001', ?, ?, ?, 0, ?, ?);`,
-    [id, t.name.trim(), payloadStr, sort, now, now]
+     VALUES (?, ?, ?, ?, ?, 0, ?, ?);`,
+    [id, currentActiveUserId, t.name.trim(), payloadStr, sort, now, now]
   );
 
   return {
     id,
-    userId: '00000000-0000-0000-0000-000000000001',
+    userId: currentActiveUserId,
     name: t.name.trim(),
     templatePayload: t.templatePayload,
     sortOrder: sort,
@@ -1164,5 +1317,313 @@ export async function incrementLocalTemplateUseCount(id: string): Promise<void> 
 export async function deleteLocalTemplate(id: string): Promise<void> {
   const db = await getDb();
   await db.runAsync(`DELETE FROM local_templates WHERE id = ?;`, [id]);
+}
+
+// ==========================================
+// POCKETS (KANTONG KEUANGAN) - PRD Section 79
+// ==========================================
+
+export async function getLocalPockets(accountId?: string): Promise<PocketModel[]> {
+  const db = await getDb();
+  let query = `
+    SELECT p.*, a.name as account_name
+    FROM local_pockets p
+    LEFT JOIN local_accounts a ON a.id = p.account_id
+  `;
+  const params: any[] = [];
+  if (accountId) {
+    query += ` WHERE p.account_id = ?`;
+    params.push(accountId);
+  }
+  query += ` ORDER BY p.sort_order ASC, p.created_at ASC;`;
+
+  const rows = await db.getAllAsync<any>(query, params);
+  return rows.map((r) => ({
+    id: r.id,
+    userId: r.user_id,
+    accountId: r.account_id,
+    name: r.name,
+    emoji: r.emoji,
+    type: r.type,
+    allocatedBalance: r.allocated_balance,
+    targetAmount: r.target_amount,
+    isLocked: Boolean(r.is_locked),
+    sortOrder: r.sort_order,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    accountName: r.account_name,
+  }));
+}
+
+export async function insertLocalPocket(data: {
+  accountId: string;
+  name: string;
+  emoji?: string;
+  type: PocketType;
+  initialAllocation?: number;
+  targetAmount?: number;
+}): Promise<PocketModel> {
+  const db = await getDb();
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const alloc = data.initialAllocation || 0;
+  const isLocked = data.type === 'locked' ? 1 : 0;
+
+  await db.runAsync(
+    `INSERT INTO local_pockets (id, user_id, account_id, name, emoji, type, allocated_balance, target_amount, is_locked, sort_order, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?);`,
+    [id, currentActiveUserId, data.accountId, data.name.trim(), data.emoji || '💰', data.type, alloc, data.targetAmount || null, isLocked, now, now]
+  );
+
+  const list = await getLocalPockets(data.accountId);
+  return list.find((p) => p.id === id)!;
+}
+
+export async function updateLocalPocket(
+  id: string,
+  updates: Partial<Pick<PocketModel, 'name' | 'emoji' | 'type' | 'targetAmount' | 'isLocked' | 'sortOrder'>>
+): Promise<void> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  const clauses: string[] = ['updated_at = ?'];
+  const params: any[] = [now];
+
+  if (updates.name !== undefined) {
+    clauses.push('name = ?');
+    params.push(updates.name.trim());
+  }
+  if (updates.emoji !== undefined) {
+    clauses.push('emoji = ?');
+    params.push(updates.emoji);
+  }
+  if (updates.type !== undefined) {
+    clauses.push('type = ?');
+    params.push(updates.type);
+    if (updates.type === 'locked') {
+      clauses.push('is_locked = 1');
+    }
+  }
+  if (updates.targetAmount !== undefined) {
+    clauses.push('target_amount = ?');
+    params.push(updates.targetAmount);
+  }
+  if (updates.isLocked !== undefined) {
+    clauses.push('is_locked = ?');
+    params.push(updates.isLocked ? 1 : 0);
+  }
+  if (updates.sortOrder !== undefined) {
+    clauses.push('sort_order = ?');
+    params.push(updates.sortOrder);
+  }
+
+  params.push(id);
+  await db.runAsync(`UPDATE local_pockets SET ${clauses.join(', ')} WHERE id = ?;`, params);
+}
+
+export async function deleteLocalPocket(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM local_pockets WHERE id = ?;`, [id]);
+}
+
+export async function transferLocalPocketFunds(
+  accountId: string,
+  sourcePocketId: string | null,
+  destinationPocketId: string | null,
+  amount: number
+): Promise<void> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+
+  await db.withTransactionAsync(async () => {
+    if (sourcePocketId) {
+      await db.runAsync(
+        `UPDATE local_pockets SET allocated_balance = MAX(0, allocated_balance - ?), updated_at = ? WHERE id = ? AND account_id = ?;`,
+        [amount, now, sourcePocketId, accountId]
+      );
+    }
+    if (destinationPocketId) {
+      await db.runAsync(
+        `UPDATE local_pockets SET allocated_balance = allocated_balance + ?, updated_at = ? WHERE id = ? AND account_id = ?;`,
+        [amount, now, destinationPocketId, accountId]
+      );
+    }
+  });
+}
+
+// ===============================================================
+// BANK CONNECTIONS & RECONCILIATION - PRD Section 80
+// ===============================================================
+
+export async function getLocalBankConnections(): Promise<BankConnectionModel[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT c.*, a.name as account_name
+     FROM local_bank_connections c
+     LEFT JOIN local_accounts a ON a.id = c.account_id
+     ORDER BY c.created_at DESC;`
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    userId: r.user_id,
+    accountId: r.account_id,
+    provider: r.provider,
+    institutionCode: r.institution_code,
+    maskedAccountNumber: r.masked_account_number,
+    status: r.status,
+    lastSyncedAt: r.last_synced_at,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    accountName: r.account_name,
+  }));
+}
+
+export async function insertLocalBankConnection(data: {
+  accountId: string;
+  provider: string;
+  institutionCode: string;
+  maskedAccountNumber?: string;
+}): Promise<BankConnectionModel> {
+  const db = await getDb();
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  await db.runAsync(
+    `INSERT INTO local_bank_connections (id, user_id, account_id, provider, institution_code, masked_account_number, status, last_synced_at, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?);`,
+    [id, currentActiveUserId, data.accountId, data.provider, data.institutionCode.toUpperCase(), data.maskedAccountNumber || null, now, now, now]
+  );
+
+  const list = await getLocalBankConnections();
+  return list.find((c) => c.id === id)!;
+}
+
+export async function getLocalBankMutations(status?: string): Promise<BankMutationModel[]> {
+  const db = await getDb();
+  let query = `SELECT * FROM local_bank_mutations`;
+  const params: any[] = [];
+  if (status) {
+    query += ` WHERE reconciliation_status = ?`;
+    params.push(status);
+  }
+  query += ` ORDER BY transaction_time DESC;`;
+
+  const rows = await db.getAllAsync<any>(query, params);
+  return rows.map((r) => ({
+    id: r.id,
+    connectionId: r.connection_id,
+    externalId: r.external_id,
+    amount: r.amount,
+    type: r.type,
+    description: r.description,
+    transactionTime: r.transaction_time,
+    reconciliationStatus: r.reconciliation_status,
+    matchedTransactionId: r.matched_transaction_id,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function importLocalBankStatement(
+  connectionId: string,
+  statementCsvText: string
+): Promise<{ importedCount: number; autoMatchedCount: number }> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+
+  const lines = statementCsvText
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith('Tanggal') && !l.startsWith('#'));
+
+  let importedCount = 0;
+  let autoMatchedCount = 0;
+
+  const connection = (await getLocalBankConnections()).find((c) => c.id === connectionId);
+  const existingTx = await getLocalTransactions();
+
+  for (let i = 0; i < lines.length; i++) {
+    const parts = lines[i].split(',').map((p) => p.trim().replace(/^["']|["']$/g, ''));
+    if (parts.length < 3) continue;
+
+    const desc = parts[1];
+    const amount = parseInt(parts[2].replace(/\D/g, ''), 10);
+    if (!amount || amount <= 0) continue;
+
+    const lineUpper = lines[i].toUpperCase();
+    const isCredit = lineUpper.includes('CR') || parts[3]?.toUpperCase() === 'CREDIT';
+    const type: 'debit' | 'credit' = isCredit ? 'credit' : 'debit';
+    const extId = `LOC-${connection?.institutionCode || 'BANK'}-${Date.now()}-${i}`;
+
+    // Smart heuristic search
+    const targetType = type === 'debit' ? 'expense' : 'income';
+    const potentialMatch = existingTx.find(
+      (tx) => tx.accountId === connection?.accountId && tx.type === targetType && tx.amount === amount
+    );
+
+    const recStatus = potentialMatch ? 'matched' : 'pending';
+    const matchedTxId = potentialMatch?.id || null;
+
+    try {
+      await db.runAsync(
+        `INSERT OR IGNORE INTO local_bank_mutations (id, connection_id, external_id, amount, type, description, transaction_time, reconciliation_status, matched_transaction_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        [crypto.randomUUID(), connectionId, extId, amount, type, desc, now, recStatus, matchedTxId, now]
+      );
+      importedCount++;
+      if (potentialMatch) autoMatchedCount++;
+    } catch {}
+  }
+
+  return { importedCount, autoMatchedCount };
+}
+
+export async function reconcileLocalBankMutation(
+  mutationId: string,
+  action: 'match' | 'create_new' | 'ignore',
+  matchedTransactionId?: string,
+  categoryId?: string,
+  note?: string
+): Promise<void> {
+  const db = await getDb();
+  const mutation = (await getLocalBankMutations()).find((m) => m.id === mutationId);
+  if (!mutation) return;
+
+  if (action === 'match') {
+    await db.runAsync(
+      `UPDATE local_bank_mutations SET reconciliation_status = 'matched', matched_transaction_id = ? WHERE id = ?;`,
+      [matchedTransactionId || null, mutationId]
+    );
+  } else if (action === 'ignore') {
+    await db.runAsync(
+      `UPDATE local_bank_mutations SET reconciliation_status = 'ignored' WHERE id = ?;`,
+      [mutationId]
+    );
+  } else if (action === 'create_new') {
+    const connections = await getLocalBankConnections();
+    const conn = connections.find((c) => c.id === mutation.connectionId);
+    const accountId = conn?.accountId || (await getLocalAccounts())[0]?.id;
+    const catId = categoryId || (await getLocalCategories(mutation.type === 'debit' ? 'expense' : 'income'))[0]?.id;
+
+    const newTx = await insertLocalTransaction({
+      accountId,
+      categoryId: catId,
+      type: mutation.type === 'debit' ? 'expense' : 'income',
+      amount: mutation.amount,
+      note: note || mutation.description,
+      transactionDate: mutation.transactionTime,
+    });
+
+    await db.runAsync(
+      `UPDATE local_bank_mutations SET reconciliation_status = 'created_as_new', matched_transaction_id = ? WHERE id = ?;`,
+      [newTx.id, mutationId]
+    );
+  }
+}
+
+export async function deleteLocalBankConnection(id: string): Promise<void> {
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(`DELETE FROM local_bank_mutations WHERE connection_id = ?;`, [id]);
+    await db.runAsync(`DELETE FROM local_bank_connections WHERE id = ?;`, [id]);
+  });
 }
 

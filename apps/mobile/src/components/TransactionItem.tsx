@@ -141,6 +141,19 @@ export function TransactionItem({
         <View style={styles.bottomRow}>
           <View style={styles.metaLeft}>
             <Text style={styles.accountText}>{accountLabel}</Text>
+            {transaction.pocket && (
+              <View style={styles.pocketBadge}>
+                <Text style={styles.pocketText} numberOfLines={1}>
+                  {transaction.pocket.emoji || '💰'} {transaction.pocket.name}
+                </Text>
+              </View>
+            )}
+            {transaction.isBankVerified && (
+              <View style={styles.bankVerifiedBadge}>
+                <Check size={9} color={colors.flow.income} strokeWidth={2.5} />
+                <Text style={styles.bankVerifiedText}>Bank</Text>
+              </View>
+            )}
             {transaction.transferFee > 0 && (
               <Text style={styles.feeText}>+fee {formatRupiah(transaction.transferFee)}</Text>
             )}
@@ -215,6 +228,32 @@ const styles = StyleSheet.create({
   accountText: {
     fontSize: 12,
     color: colors.text.secondary,
+  },
+  pocketBadge: {
+    backgroundColor: 'rgba(212, 175, 55, 0.12)',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+    maxWidth: 95,
+  },
+  pocketText: {
+    fontSize: 10,
+    color: colors.gold.champagne,
+    fontWeight: '600',
+  },
+  bankVerifiedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 6,
+    gap: 2,
+  },
+  bankVerifiedText: {
+    fontSize: 9.5,
+    color: colors.flow.income,
+    fontWeight: '700',
   },
   feeText: {
     fontSize: 11,

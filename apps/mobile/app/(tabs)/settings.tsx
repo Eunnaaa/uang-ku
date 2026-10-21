@@ -161,17 +161,17 @@ export default function SettingsScreen() {
   const handleManualSync = async () => {
     hapticMedium();
     try {
-      const res = await SyncEngine.processOutbox();
+      const res = await SyncEngine.syncAll();
       const db = await getDb();
       const pending = await db.getFirstAsync<{ count: number }>(
         `SELECT count(*) as count FROM mutation_outbox WHERE status = 'pending';`
       );
       setPendingSyncCount(pending?.count || 0);
 
-      if (res.processedCount > 0) {
-        toast.showSuccess('Sinkronisasi Sukses', `${res.processedCount} mutasi terkirim ke server.`);
+      if (res.pushed > 0 || res.pulled > 0) {
+        toast.showSuccess('Sinkronisasi Sukses', `${res.pushed} terkirim, ${res.pulled} data terbaru ditarik.`);
       } else {
-        toast.showInfo('Sinkronisasi Lengkap', 'Seluruh transaksi lokal telah sinkron dengan server.');
+        toast.showInfo('Sinkronisasi Lengkap', 'Seluruh transaksi telah sinkron sempurna dengan server.');
       }
     } catch {
       toast.showWarning('Mode Offline', 'Koneksi ke server terputus. Data tetap tersimpan aman di SQLite lokal.');
@@ -1267,6 +1267,42 @@ export default function SettingsScreen() {
               <View>
                 <Text style={styles.menuLabel}>Target Keuangan (Goals)</Text>
                 <Text style={styles.menuSublabel}>Tabungan impian & penguncian alokasi saldo</Text>
+              </View>
+            </View>
+            <ChevronRight size={18} color={colors.text.muted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.menuItem, styles.menuItemBorder]}
+            activeOpacity={0.7}
+            onPress={() => {
+              hapticSelection();
+              router.push('/pockets');
+            }}
+          >
+            <View style={styles.menuLeft}>
+              <Layers size={19} color={colors.gold.champagne} />
+              <View>
+                <Text style={styles.menuLabel}>Kantong Keuangan (Pockets)</Text>
+                <Text style={styles.menuSublabel}>Envelope budgeting alokasi belanja & proteksi terkunci</Text>
+              </View>
+            </View>
+            <ChevronRight size={18} color={colors.text.muted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.menuItem, styles.menuItemBorder]}
+            activeOpacity={0.7}
+            onPress={() => {
+              hapticSelection();
+              router.push('/bank-sync');
+            }}
+          >
+            <View style={styles.menuLeft}>
+              <Landmark size={19} color={colors.gold.champagne} />
+              <View>
+                <Text style={styles.menuLabel}>Integrasi Bank & Mutasi</Text>
+                <Text style={styles.menuSublabel}>Impor e-statement & rekonsiliasi cerdas anti-duplikasi</Text>
               </View>
             </View>
             <ChevronRight size={18} color={colors.text.muted} />

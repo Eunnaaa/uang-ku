@@ -1,5 +1,6 @@
 import { Elysia } from 'elysia';
 import crypto from 'crypto';
+import { env } from '../config/env';
 
 export interface AuthContext {
   userId: string;
@@ -7,11 +8,34 @@ export interface AuthContext {
 }
 
 /**
+ * Creates an HMAC-SHA256 signed JWT
+ */
+export function createHs256Jwt(
+  payload: { sub: string; email?: string; [key: string]: any },
+  secret: string = env.JWT_SECRET,
+  expiresInSec: number = 86400 * 30
+): string {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const fullPayload = {
+    ...payload,
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + expiresInSec,
+  };
+  const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const payloadB64 = Buffer.from(JSON.stringify(fullPayload)).toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', secret)
+    .update(`${headerB64}.${payloadB64}`)
+    .digest('base64url');
+  return `${headerB64}.${payloadB64}.${signature}`;
+}
+
+/**
  * Verify HS256 JWT signature and claims
  */
-function verifyHs256Jwt(
+export function verifyHs256Jwt(
   token: string,
-  secret: string
+  secret: string = env.JWT_SECRET
 ): { userId: string; email?: string } | null {
   try {
     const parts = token.split('.');
@@ -69,7 +93,7 @@ export const authMiddleware = new Elysia({ name: 'auth-middleware' })
     const token = authHeader.replace('Bearer ', '').trim();
 
     try {
-      const jwtSecret = process.env.SUPABASE_JWT_SECRET;
+      const jwtSecret = env.JWT_SECRET;
 
       // 1. If secret is configured, perform strict cryptographic verification
       if (jwtSecret) {

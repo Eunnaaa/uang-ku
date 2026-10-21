@@ -5,6 +5,8 @@ import { sql } from 'drizzle-orm';
 export const profiles = pgTable('profiles', {
   id: uuid('id').primaryKey(),
   displayName: varchar('display_name', { length: 100 }),
+  email: varchar('email', { length: 255 }),
+  passwordHash: text('password_hash'),
   defaultCurrency: varchar('default_currency', { length: 3 }).default('IDR').notNull(),
   timezone: varchar('timezone', { length: 50 }).default('Asia/Jakarta').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -42,6 +44,25 @@ export const categories = pgTable('categories', {
   index('idx_categories_user').on(table.userId, table.isArchived)
 ]);
 
+// 3.1 Pockets Table (PRD Section 79)
+export const pockets = pgTable('pockets', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').references(() => profiles.id, { onDelete: 'cascade' }).notNull(),
+  accountId: uuid('account_id').references(() => accounts.id, { onDelete: 'cascade' }).notNull(),
+  name: varchar('name', { length: 50 }).notNull(),
+  emoji: varchar('emoji', { length: 10 }).default('💰'),
+  type: varchar('type', { length: 20 }).notNull(), // 'spending' | 'saving' | 'locked' | 'bills'
+  allocatedBalance: bigint('allocated_balance', { mode: 'number' }).default(0).notNull(),
+  targetAmount: bigint('target_amount', { mode: 'number' }),
+  isLocked: boolean('is_locked').default(false).notNull(),
+  sortOrder: integer('sort_order').default(0).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_pockets_user_account').on(table.userId, table.accountId),
+  check('chk_pocket_allocated', sql`allocated_balance >= 0`),
+]);
+
 // 4. Transactions Table
 export const transactions = pgTable('transactions', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -49,11 +70,13 @@ export const transactions = pgTable('transactions', {
   accountId: uuid('account_id').references(() => accounts.id).notNull(),
   destinationAccountId: uuid('destination_account_id').references(() => accounts.id),
   categoryId: uuid('category_id').references(() => categories.id),
+  pocketId: uuid('pocket_id').references(() => pockets.id, { onDelete: 'set null' }),
   type: varchar('type', { length: 20 }).notNull(), // 'income' | 'expense' | 'transfer'
   amount: bigint('amount', { mode: 'number' }).notNull(),
   transferFee: bigint('transfer_fee', { mode: 'number' }).default(0).notNull(),
   currency: varchar('currency', { length: 3 }).default('IDR').notNull(),
   note: text('note'),
+  receiptUrl: text('receipt_url'),
   transactionDate: timestamp('transaction_date', { withTimezone: true }).notNull(),
   clientId: uuid('client_id').notNull().unique(),
   version: integer('version').default(1).notNull(),
@@ -165,12 +188,49 @@ export const transactionTemplates = pgTable('transaction_templates', {
   index('idx_templates_user_use').on(table.userId, table.useCount),
 ]);
 
+// 11. Bank Connections Table (PRD Section 80.3)
+export const bankConnections = pgTable('bank_connections', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').references(() => profiles.id, { onDelete: 'cascade' }).notNull(),
+  accountId: uuid('account_id').references(() => accounts.id, { onDelete: 'cascade' }).notNull(),
+  provider: varchar('provider', { length: 50 }).notNull(), // 'statement_import' | 'brick' | 'ayoconnect' | 'shortcuts'
+  institutionCode: varchar('institution_code', { length: 20 }).notNull(), // 'BCA' | 'MANDIRI' | 'BRI' | 'BNI' | 'GOPAY' | 'OVO'
+  maskedAccountNumber: varchar('masked_account_number', { length: 30 }),
+  status: varchar('status', { length: 20 }).default('active').notNull(),
+  lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+  metadata: jsonb('metadata'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_bank_conn_user').on(table.userId, table.accountId),
+]);
+
+// 12. Bank Mutations Table (PRD Section 80.3)
+export const bankMutations = pgTable('bank_mutations', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  connectionId: uuid('connection_id').references(() => bankConnections.id, { onDelete: 'cascade' }).notNull(),
+  externalId: varchar('external_id', { length: 100 }).notNull().unique(),
+  amount: bigint('amount', { mode: 'number' }).notNull(),
+  type: varchar('type', { length: 10 }).notNull(), // 'debit' | 'credit'
+  description: text('description').notNull(),
+  transactionTime: timestamp('transaction_time', { withTimezone: true }).notNull(),
+  reconciliationStatus: varchar('reconciliation_status', { length: 20 }).default('pending').notNull(),
+  matchedTransactionId: uuid('matched_transaction_id').references(() => transactions.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_bank_mut_conn_status').on(table.connectionId, table.reconciliationStatus),
+  check('chk_bank_mut_amount', sql`amount > 0`),
+]);
+
 export type Profile = typeof profiles.$inferSelect;
 export type Account = typeof accounts.$inferSelect;
 export type Category = typeof categories.$inferSelect;
+export type Pocket = typeof pockets.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;
 export type NewTransaction = typeof transactions.$inferInsert;
 export type Budget = typeof budgets.$inferSelect;
 export type FinancialGoal = typeof financialGoals.$inferSelect;
 export type RecurringRule = typeof recurringRules.$inferSelect;
 export type TransactionTemplate = typeof transactionTemplates.$inferSelect;
+export type BankConnection = typeof bankConnections.$inferSelect;
+export type BankMutation = typeof bankMutations.$inferSelect;

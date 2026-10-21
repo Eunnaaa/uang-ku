@@ -44,6 +44,7 @@ import {
   type AccountModel,
   type RecurringFrequency,
   type TemplateModel,
+  type PocketModel,
 } from '@uangku/contracts';
 import { colors } from '../../src/theme/colors';
 import { CustomKeypad } from '../../src/components/CustomKeypad';
@@ -59,6 +60,7 @@ import {
   insertLocalTemplate,
   incrementLocalTemplateUseCount,
   checkPotentialDuplicateTransaction,
+  getLocalPockets,
 } from '../../src/db/sqlite';
 import { SyncEngine } from '../../src/sync/syncEngine';
 import { hapticMedium, hapticSelection, hapticSuccess, hapticError, hapticLight } from '../../src/theme/haptics';
@@ -87,6 +89,10 @@ export default function NewTransactionScreen() {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string>('');
   const [selectedDestAccountId, setSelectedDestAccountId] = useState<string>('');
+
+  // Pocketing / Kantong Keuangan (PRD Section 79)
+  const [accountPockets, setAccountPockets] = useState<PocketModel[]>([]);
+  const [selectedPocketId, setSelectedPocketId] = useState<string | null>(null);
 
   // Recurring Transaction (PRD Section 58)
   const [isRecurring, setIsRecurring] = useState(false);
@@ -170,6 +176,20 @@ export default function NewTransactionScreen() {
     }
     loadFormMetadata();
   }, [txType, params.editId, params.presetAmount, params.presetNote, params.presetAccountId, params.presetCategoryId]);
+
+  useEffect(() => {
+    if (selectedAccountId) {
+      getLocalPockets(selectedAccountId).then((pockets) => {
+        // Only spending and bills pockets are usable for quick transactions
+        const usable = pockets.filter((p) => !p.isLocked);
+        setAccountPockets(usable);
+        setSelectedPocketId(null);
+      }).catch(() => setAccountPockets([]));
+    } else {
+      setAccountPockets([]);
+      setSelectedPocketId(null);
+    }
+  }, [selectedAccountId]);
 
   const handleApplyTemplate = async (tmpl: TemplateModel) => {
     hapticSuccess();
@@ -261,6 +281,7 @@ export default function NewTransactionScreen() {
             accountId: selectedAccountId,
             destinationAccountId: txType === 'transfer' ? selectedDestAccountId : null,
             categoryId: txType === 'transfer' ? null : selectedCategoryId,
+            pocketId: txType === 'expense' ? selectedPocketId : null,
             type: txType,
             amount,
             transferFee: txType === 'transfer' ? transferFee : 0,
@@ -547,6 +568,45 @@ export default function NewTransactionScreen() {
             </ScrollView>
           </View>
         </View>
+
+        {/* Pocket Selector (PRD Section 79.2) */}
+        {txType === 'expense' && accountPockets.length > 0 && (
+          <View style={styles.formRow}>
+            <View style={styles.formCol}>
+              <Text style={styles.fieldLabel}>KANTONG ALOKASI (OPSIONAL)</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
+                <TouchableOpacity
+                  style={[styles.accountPill, selectedPocketId === null && styles.accountPillSelected]}
+                  onPress={() => {
+                    hapticSelection();
+                    setSelectedPocketId(null);
+                  }}
+                >
+                  <Text style={[styles.accountPillText, selectedPocketId === null && styles.accountPillTextSelected]}>
+                    🌐 Saldo Utama
+                  </Text>
+                </TouchableOpacity>
+                {accountPockets.map((pkt) => {
+                  const isSelected = selectedPocketId === pkt.id;
+                  return (
+                    <TouchableOpacity
+                      key={pkt.id}
+                      style={[styles.accountPill, isSelected && styles.accountPillSelected]}
+                      onPress={() => {
+                        hapticSelection();
+                        setSelectedPocketId(pkt.id);
+                      }}
+                    >
+                      <Text style={[styles.accountPillText, isSelected && styles.accountPillTextSelected]}>
+                        {pkt.emoji || '💰'} {pkt.name} ({formatRupiah(pkt.allocatedBalance)})
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </View>
+        )}
 
         {txType === 'transfer' && (
           <View style={styles.formRow}>

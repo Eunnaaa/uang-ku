@@ -2,7 +2,8 @@ export type TransactionType = 'income' | 'expense' | 'transfer';
 export type AccountType = 'cash' | 'bank' | 'e_wallet' | 'other';
 export type SyncStatus = 'synced' | 'pending_sync' | 'failed';
 export type OutboxOperation = 'create' | 'update' | 'delete';
-export type EntityType = 'transaction' | 'account' | 'category';
+export type EntityType = 'transaction' | 'account' | 'category' | 'pocket' | 'bank_connection' | 'bank_mutation';
+export type PocketType = 'spending' | 'saving' | 'locked' | 'bills';
 
 export interface ProfileModel {
   id: string;
@@ -28,6 +29,50 @@ export interface AccountModel {
   updatedAt: string;
 }
 
+export interface PocketModel {
+  id: string;
+  userId: string;
+  accountId: string;
+  name: string;
+  emoji?: string | null;
+  type: PocketType;
+  allocatedBalance: number;
+  targetAmount?: number | null;
+  isLocked: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  accountName?: string;
+}
+
+export interface BankConnectionModel {
+  id: string;
+  userId: string;
+  accountId: string;
+  provider: 'statement_import' | 'brick' | 'ayoconnect' | 'shortcuts';
+  institutionCode: string; // 'BCA' | 'MANDIRI' | 'BRI' | 'BNI' | 'GOPAY' | 'OVO'
+  maskedAccountNumber?: string | null;
+  status: 'active' | 'requires_reauth' | 'disconnected';
+  lastSyncedAt?: string | null;
+  metadata?: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+  accountName?: string;
+}
+
+export interface BankMutationModel {
+  id: string;
+  connectionId: string;
+  externalId: string;
+  amount: number;
+  type: 'debit' | 'credit';
+  description: string;
+  transactionTime: string;
+  reconciliationStatus: 'pending' | 'matched' | 'created_as_new' | 'ignored';
+  matchedTransactionId?: string | null;
+  createdAt: string;
+}
+
 export interface CategoryModel {
   id: string;
   userId: string | null;
@@ -46,6 +91,7 @@ export interface TransactionModel {
   accountId: string;
   destinationAccountId: string | null;
   categoryId: string | null;
+  pocketId?: string | null;
   type: TransactionType;
   amount: number;
   transferFee: number;
@@ -63,6 +109,8 @@ export interface TransactionModel {
   account?: Pick<AccountModel, 'id' | 'name' | 'type'>;
   destinationAccount?: Pick<AccountModel, 'id' | 'name' | 'type'> | null;
   category?: Pick<CategoryModel, 'id' | 'name' | 'icon'> | null;
+  pocket?: Pick<PocketModel, 'id' | 'name' | 'emoji' | 'type'> | null;
+  isBankVerified?: boolean;
 }
 
 export interface OutboxMutationModel {

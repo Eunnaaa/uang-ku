@@ -16,6 +16,8 @@ import { budgetRoutes } from './modules/budgets/budget.route';
 import { goalRoutes } from './modules/goals/goal.route';
 import { recurringRoutes } from './modules/recurring/recurring.route';
 import { appConfigRoutes } from './modules/app-config/app-config.route';
+import { pocketRoutes } from './modules/pockets/pocket.route';
+import { bankConnectionRoutes } from './modules/bank-connections/bank-connection.route';
 import { seedDatabase } from './db/seed';
 
 // Seed PostgreSQL database asynchronously on startup
@@ -93,6 +95,8 @@ const app = new Elysia()
   .use(goalRoutes)
   .use(recurringRoutes)
   .use(appConfigRoutes)
+  .use(pocketRoutes)
+  .use(bankConnectionRoutes)
   .listen(env.PORT);
 
 console.log(`✨ UangKu Elysia API is running at http://${app.server?.hostname}:${app.server?.port}`);

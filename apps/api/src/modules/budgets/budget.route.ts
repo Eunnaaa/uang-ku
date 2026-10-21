@@ -9,6 +9,8 @@ import { authMiddleware } from '../../middleware/auth';
 import { successResponse } from '../../middleware/error-handler';
 import { defaultCategories } from '../categories/category.route';
 import { demoTransactions } from '../transactions/transaction.route';
+import { db, schema } from '../../db/client';
+import { eq } from 'drizzle-orm';
 
 export interface BudgetRecord {
   id: string;
@@ -88,6 +90,19 @@ export const budgetRoutes = new Elysia({ prefix: '/api/v1/budgets' })
     };
 
     demoBudgets.unshift(newBudget);
+
+    try {
+      await db.insert(schema.budgets).values({
+        id: newBudget.id,
+        userId: user.userId,
+        categoryId: newBudget.categoryId,
+        amount: newBudget.amount,
+        currency: newBudget.currency,
+        period: newBudget.period,
+        isActive: true,
+      });
+    } catch {}
+
     return successResponse(newBudget);
   })
   .patch('/:id', async ({ params, body, user }) => {
@@ -102,6 +117,15 @@ export const budgetRoutes = new Elysia({ prefix: '/api/v1/budgets' })
     if (input.isActive !== undefined) budget.isActive = input.isActive;
     budget.updatedAt = new Date().toISOString();
 
+    try {
+      await db.update(schema.budgets).set({
+        amount: budget.amount,
+        period: budget.period,
+        isActive: budget.isActive,
+        updatedAt: new Date(budget.updatedAt),
+      }).where(eq(schema.budgets.id, budget.id));
+    } catch {}
+
     return successResponse(budget);
   })
   .delete('/:id', async ({ params, user }) => {
@@ -111,6 +135,11 @@ export const budgetRoutes = new Elysia({ prefix: '/api/v1/budgets' })
     }
 
     demoBudgets.splice(index, 1);
+
+    try {
+      await db.delete(schema.budgets).where(eq(schema.budgets.id, params.id));
+    } catch {}
+
     return successResponse({ id: params.id, deleted: true });
   })
   // PRD 60.4: Summary endpoint

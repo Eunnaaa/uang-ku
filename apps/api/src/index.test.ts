@@ -522,4 +522,233 @@ describe('UangKu API Endpoints & Features', () => {
     expect(res.headers.get('referrer-policy')).toBe('strict-origin-when-cross-origin');
     expect(res.headers.get('permissions-policy')).toBeDefined();
   });
+
+  it('POST & GET /api/v1/accounts/:accountId/pockets creates pocket and handles intra-account transfers (PRD Section 79)', async () => {
+    const accountId = 'a2000000-0000-0000-0000-000000000002';
+
+    // 1. Create a spending pocket
+    const createRes = await app.handle(
+      new Request(`http://localhost/api/v1/accounts/${accountId}/pockets`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer demo-token',
+        },
+        body: JSON.stringify({
+          name: 'Budget Makan Siang',
+          emoji: '🍱',
+          type: 'spending',
+          initialAllocation: 750000,
+          targetAmount: 1500000,
+        }),
+      })
+    );
+    expect(createRes.status).toBe(200);
+    const createdPocket = (await createRes.json()).data;
+    expect(createdPocket.name).toBe('Budget Makan Siang');
+    expect(createdPocket.allocatedBalance).toBe(750000);
+    expect(createdPocket.isLocked).toBe(false);
+
+    // 2. Query account pockets
+    const getRes = await app.handle(
+      new Request(`http://localhost/api/v1/accounts/${accountId}/pockets`, {
+        headers: { Authorization: 'Bearer demo-token' },
+      })
+    );
+    expect(getRes.status).toBe(200);
+    const getBody = (await getRes.json()).data;
+    expect(getBody.pockets.length).toBeGreaterThan(0);
+    expect(getBody.totalAllocated).toBeGreaterThan(0);
+
+    // 3. Intra-account transfer (reallocation) from pocket back to main unallocated balance
+    const transferRes = await app.handle(
+      new Request('http://localhost/api/v1/pockets/transfer', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer demo-token',
+        },
+        body: JSON.stringify({
+          accountId,
+          sourcePocketId: createdPocket.id,
+          destinationPocketId: null, // to main unallocated
+          amount: 250000,
+        }),
+      })
+    );
+    expect(transferRes.status).toBe(200);
+    const transferBody = (await transferRes.json()).data;
+    expect(transferBody.sourcePocket.allocatedBalance).toBe(500000);
+  });
+
+  it('POST & GET /api/v1/bank-connections and e-statement reconciliation (PRD Section 80)', async () => {
+    const accountId = 'a2000000-0000-0000-0000-000000000002';
+
+    // 1. Create bank connection
+    const createConnRes = await app.handle(
+      new Request('http://localhost/api/v1/bank-connections', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer demo-token',
+        },
+        body: JSON.stringify({
+          accountId,
+          provider: 'statement_import',
+          institutionCode: 'BCA',
+          maskedAccountNumber: '•••• 1234',
+        }),
+      })
+    );
+    expect(createConnRes.status).toBe(200);
+    const connection = (await createConnRes.json()).data;
+    expect(connection.institutionCode).toBe('BCA');
+
+    // 2. Import CSV bank statement
+    const sampleCsv = `Tanggal,Keterangan,Nominal,Tipe\n2026-10-21,QRIS KOPI KENANGAN,25000,DB\n2026-10-21,TRANSFER GAJI PT ABC,10000000,CR`;
+    const importRes = await app.handle(
+      new Request(`http://localhost/api/v1/bank-connections/${connection.id}/import-statement`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer demo-token',
+        },
+        body: JSON.stringify({
+          connectionId: connection.id,
+          statementText: sampleCsv,
+          format: 'csv',
+        }),
+      })
+    );
+    expect(importRes.status).toBe(200);
+    const importBody = (await importRes.json()).data;
+    expect(importBody.totalImported).toBe(2);
+
+    // 3. Reconcile mutation by creating new transaction
+    const mutationId = importBody.mutations[0].id;
+    const reconcileRes = await app.handle(
+      new Request(`http://localhost/api/v1/bank-mutations/${mutationId}/reconcile`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer demo-token',
+        },
+        body: JSON.stringify({
+          action: 'create_new',
+          note: 'Otomatis dari mutasi bank BCA',
+        }),
+      })
+    );
+    expect(reconcileRes.status).toBe(200);
+    const reconcileBody = (await reconcileRes.json()).data;
+    expect(reconcileBody.reconciliationStatus).toBe('created_as_new');
+    expect(reconcileBody.matchedTransactionId).toBeDefined();
+
+    // 4. Reconcile another mutation by matching to the newly created transaction
+    const secondMutationId = importBody.mutations[1].id;
+    const matchRes = await app.handle(
+      new Request(`http://localhost/api/v1/bank-mutations/${secondMutationId}/reconcile`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer demo-token',
+        },
+        body: JSON.stringify({
+          action: 'match',
+          matchedTransactionId: reconcileBody.matchedTransactionId,
+        }),
+      })
+    );
+    expect(matchRes.status).toBe(200);
+    const matchBody = (await matchRes.json()).data;
+    expect(matchBody.reconciliationStatus).toBe('matched');
+    expect(matchBody.matchedTransactionId).toBe(reconcileBody.matchedTransactionId);
+
+    // 5. Delete bank connection & verify cascading removal
+    const deleteConnRes = await app.handle(
+      new Request(`http://localhost/api/v1/bank-connections/${connection.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer demo-token' },
+      })
+    );
+    expect(deleteConnRes.status).toBe(200);
+    const deleteConnBody = (await deleteConnRes.json()).data;
+    expect(deleteConnBody.deleted).toBe(true);
+  });
+
+  it('Transaction with Pocket ID deducts pocket balance and restores on delete (PRD Section 79.5)', async () => {
+    const accountId = 'a2000000-0000-0000-0000-000000000002';
+
+    // 1. Create pocket
+    const createPocketRes = await app.handle(
+      new Request(`http://localhost/api/v1/accounts/${accountId}/pockets`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer demo-token',
+        },
+        body: JSON.stringify({
+          name: 'Kantong Kopi & Snack',
+          emoji: '☕',
+          type: 'spending',
+          initialAllocation: 200000,
+        }),
+      })
+    );
+    expect(createPocketRes.status).toBe(200);
+    const pkt = (await createPocketRes.json()).data;
+    expect(pkt.allocatedBalance).toBe(200000);
+
+    // 2. Create expense transaction using this pocket
+    const txRes = await app.handle(
+      new Request('http://localhost/api/v1/transactions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer demo-token',
+        },
+        body: JSON.stringify({
+          accountId,
+          categoryId: 'c1000000-0000-0000-0000-000000000001',
+          pocketId: pkt.id,
+          type: 'expense',
+          amount: 45000,
+          note: 'Kopi Arabika & Croissant',
+          transactionDate: new Date().toISOString(),
+          clientId: crypto.randomUUID(),
+        }),
+      })
+    );
+    expect(txRes.status).toBe(200);
+    const tx = (await txRes.json()).data;
+    expect(tx.pocketId).toBe(pkt.id);
+
+    // 3. Verify pocket balance was deducted (200000 - 45000 = 155000)
+    const checkPocketRes = await app.handle(
+      new Request(`http://localhost/api/v1/accounts/${accountId}/pockets`, {
+        headers: { Authorization: 'Bearer demo-token' },
+      })
+    );
+    const pocketsList = (await checkPocketRes.json()).data.pockets;
+    const updatedPkt = pocketsList.find((p: any) => p.id === pkt.id);
+    expect(updatedPkt.allocatedBalance).toBe(155000);
+
+    // 4. Delete the transaction and verify pocket balance is restored
+    const deleteTxRes = await app.handle(
+      new Request(`http://localhost/api/v1/transactions/${tx.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer demo-token' },
+      })
+    );
+    expect(deleteTxRes.status).toBe(200);
+
+    const recheckPocketRes = await app.handle(
+      new Request(`http://localhost/api/v1/accounts/${accountId}/pockets`, {
+        headers: { Authorization: 'Bearer demo-token' },
+      })
+    );
+    const finalPocketsList = (await recheckPocketRes.json()).data.pockets;
+    const restoredPkt = finalPocketsList.find((p: any) => p.id === pkt.id);
+    expect(restoredPkt.allocatedBalance).toBe(200000);
+  });
 });

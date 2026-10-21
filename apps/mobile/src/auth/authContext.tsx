@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { Alert } from 'react-native';
-import { getDb } from '../db/sqlite';
+import { getDb, clearAllLocalTransactions, setActiveUserId } from '../db/sqlite';
 
 export interface AuthUser {
   id: string;
@@ -53,8 +53,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ]);
 
         if (savedToken && savedUser) {
+          const parsedUser = JSON.parse(savedUser);
           setToken(savedToken);
-          setUser(JSON.parse(savedUser));
+          setUser(parsedUser);
+          if (parsedUser.id) {
+            setActiveUserId(parsedUser.id);
+          }
         } else {
           // Default to default user for smooth local-first experience
           const defaultUser: AuthUser = {
@@ -64,6 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             isGuest: false,
           };
           setUser(defaultUser);
+          setActiveUserId(defaultUser.id);
           setToken('demo-jwt-token');
           await Promise.all([
             SecureStore.setItemAsync(AUTH_TOKEN_KEY, 'demo-jwt-token'),
@@ -104,6 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const authToken: string = body.data.token;
 
       setUser(authUser);
+      setActiveUserId(authUser.id);
       setToken(authToken);
 
       await Promise.all([
@@ -155,6 +161,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const authToken: string = body.data.token;
 
       setUser(authUser);
+      setActiveUserId(authUser.id);
       setToken(authToken);
 
       await Promise.all([
@@ -191,6 +198,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
     const guestToken = 'guest-token-' + Date.now();
     setUser(guestUser);
+    setActiveUserId(guestUser.id);
     setToken(guestToken);
     await Promise.all([
       SecureStore.setItemAsync(AUTH_TOKEN_KEY, guestToken),
@@ -205,6 +213,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       SecureStore.deleteItemAsync(AUTH_TOKEN_KEY),
       SecureStore.deleteItemAsync(AUTH_USER_KEY),
     ]);
+    await clearAllLocalTransactions();
   };
 
   const deleteAccount = async (): Promise<boolean> => {
@@ -217,14 +226,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Purge local database tables completely
-      const db = await getDb();
-      await db.execAsync(`
-        DELETE FROM local_transactions;
-        DELETE FROM mutation_outbox;
-        DELETE FROM local_goals;
-        DELETE FROM local_recurring_rules;
-        UPDATE local_accounts SET initial_balance = 0, reserved_amount = 0;
-      `);
+      await clearAllLocalTransactions();
 
       await logout();
       return true;

@@ -2618,7 +2618,8 @@ Potential post-MVP features:
 
 ### V2
 
-- bank integration;
+- pocketing / kantong keuangan teralokasi (spesifikasi lengkap — lihat seksi 79);
+- bank & e-wallet integration serta smart reconciliation (spesifikasi lengkap — lihat seksi 80);
 - shared household;
 - multi-currency dengan konversi (lihat seksi 65);
 - backup & restore via iCloud Drive (lihat seksi 70);
@@ -3717,3 +3718,158 @@ Gunakan `i18next` + `react-i18next` dengan deteksi locale dari `expo-localizatio
 - Currency formatting menggunakan `Intl.NumberFormat` dengan `style: 'currency'` untuk konsistensi lintas platform.
 
 ---
+
+# 79. Pocketing (Kantong Keuangan)
+
+## 79.1 Overview
+
+Fitur Pocketing (Kantong Keuangan) mengadopsi prinsip *envelope budgeting*, memungkinkan pengguna membagi dan mengalokasikan saldo riil dari satu akun keuangan fisik (bank, e-wallet, atau tunai) ke dalam beberapa sub-kantong virtual dengan peruntukan belanja atau proteksi dana spesifik.
+
+Perbedaan fundamental:
+- **Akun / Dompet:** Wadah fisik penyimpanan uang (misal: BCA, GoPay, Tunai).
+- **Budget:** Batas teoritis pengeluaran bulanan per kategori (tidak mengunci uang fisik).
+- **Goal:** Target tabungan impian dengan tenggat waktu.
+- **Pocket (Kantong):** Alokasi riil dari saldo akun untuk mengisolasi dana belanja harian vs dana cadangan/terkunci.
+
+## 79.2 User Journey
+
+1. **Pembuatan Kantong:**
+   - User membuka detail akun atau menu **Pengaturan > Kantong Keuangan > + Buat Kantong**.
+   - User memilih akun induk (misal: *BCA Utama*), mengisi nama kantong (misal: *Makan & Ngopi*), memilih emoji/ikon, memilih tipe kantong (*Spending*, *Saving / Locked*, *Bills*), dan menetapkan alokasi saldo awal.
+2. **Alokasi & Pindah Dana Antar Kantong:**
+   - User dapat memindahkan dana dari *Saldo Utama (Unallocated)* ke kantong atau antar kantong secara instan.
+   - Pemindahan antar kantong dalam akun yang sama tidak dicatat sebagai transaksi pemasukan/pengeluaran baru, melainkan mutasi alokasi internal (*intra-account reallocation*).
+3. **Pencatatan Transaksi Cepat dengan Kantong:**
+   - Di modal input transaksi (`transaction/new.tsx`), saat user memilih akun yang memiliki kantong, muncul chip selector kantong di bawah baris akun: `[BCA Utama ▾] -> [Semua] [Makan & Ngopi] [Belanja Bulanan]`.
+   - Transaksi memotong saldo kantong yang dipilih sekaligus saldo total akun induk.
+4. **Proteksi Kantong Terkunci (Locked Pocket):**
+   - Kantong bertipe *Locked* tidak muncul pada pilihan pembayaran transaksi harian kecuali dicairkan terlebih dahulu oleh pengguna ke saldo utama.
+
+## 79.3 Data Model — `pockets`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| id | UUID | Yes | Primary key |
+| user_id | UUID | Yes | Pemilik kantong |
+| account_id | UUID | Yes | Foreign key ke `accounts(id)` on delete cascade |
+| name | VARCHAR(50) | Yes | Nama kantong (cth: "Belanja Bulanan") |
+| emoji | VARCHAR(10) | No | Emoji atau representasi ikon |
+| type | VARCHAR(20) | Yes | Enum: `'spending'`, `'saving'`, `'locked'`, `'bills'` |
+| allocated_balance | BIGINT | Yes | Saldo alokasi saat ini dalam minor units (Rp) |
+| target_amount | BIGINT | No | Target nominal opsional (minor units) |
+| is_locked | BOOLEAN | Yes | Default `false`. True jika tipe `'locked'` |
+| sort_order | INTEGER | Yes | Urutan tampilan (default `0`) |
+| created_at | TIMESTAMPTZ | Yes | Waktu pembuatan |
+| updated_at | TIMESTAMPTZ | Yes | Waktu pembaruan |
+
+Relasi pada tabel transaksi:
+`transactions.pocket_id` (UUID, nullable, foreign key ke `pockets(id)`).
+
+## 79.4 Endpoints
+
+```http
+GET    /api/v1/accounts/:accountId/pockets
+POST   /api/v1/accounts/:accountId/pockets
+PATCH  /api/v1/pockets/:id
+DELETE /api/v1/pockets/:id
+POST   /api/v1/pockets/transfer
+```
+
+### Request Payload `POST /api/v1/pockets/transfer`
+```json
+{
+  "sourcePocketId": "uuid-atau-null-untuk-main-balance",
+  "destinationPocketId": "uuid-atau-null-untuk-main-balance",
+  "accountId": "uuid-akun-terkait",
+  "amount": 500000
+}
+```
+
+## 79.5 Rules & Business Logic
+
+- **Aturan Konsistensi Saldo (Invariant):**
+  $$\text{Total Saldo Akun} = \text{Saldo Unallocated} + \sum (\text{Saldo Seluruh Kantong})$$
+- Saldo yang dialokasikan ke kantong tidak boleh melebihi sisa *Saldo Unallocated* pada akun terkait.
+- **Kebijakan Overspending Kantong:**
+  - Default: Jika transaksi pengeluaran melebihi sisa alokasi pada kantong belanja, aplikasi memberikan konfirmasi: *"Saldo kantong tidak cukup. Ambil selisih Rp X dari saldo utama?"*.
+  - Jika disetujui, saldo kantong menjadi 0 dan sisa selisih dipotong dari saldo utama (*unallocated*).
+- Penghapusan kantong secara otomatis mengembalikan seluruh sisa dana alokasi ke *Saldo Utama (Unallocated)* akun induk.
+
+---
+
+# 80. Bank & E-Wallet Account Linking & Smart Reconciliation
+
+## 80.1 Overview
+
+Fitur integrasi perbankan dan e-wallet bertujuan menghubungkan mutasi rekening bank dan dompet digital secara semi-otomatis hingga otomatis penuh ke dalam aplikasi UangKu, dilengkapi mesin rekonsiliasi cerdas (*smart reconciliation engine*) untuk mencegah pencatatan transaksi ganda (*double-counting*).
+
+## 80.2 Metode Integrasi (3 Jalur)
+
+1. **Jalur A — e-Statement Parser (Offline-First & Zero Credential - Rekomendasi Tahap 1):**
+   - Pengguna mengimpor mutasi rekening berkala via file CSV atau e-statement PDF dari m-banking (BCA, Mandiri, BRI, BNI) atau e-wallet (GoPay, OVO).
+   - Ekstraksi data berlangsung lokal di perangkat atau via worker privat tanpa menyimpan kredensial perbankan.
+2. **Jalur B — iOS Siri Shortcuts & Notification Hook (Semi-Otomatis - Tahap 2):**
+   - Memanfaatkan iOS Shortcuts untuk menangkap notifikasi transaksi debit/QRIS dari aplikasi m-banking atau e-wallet saat pembayaran berhasil, kemudian memicu sinkronisasi transaksi ke UangKu via URL Scheme / Local API.
+3. **Jalur C — Open Finance Aggregator API (Live Sync - Tahap 3):**
+   - Menghubungkan API pihak ketiga berlisensi (seperti Brick / Ayoconnect / Finantier) menggunakan widget autentikasi resmi bank.
+   - Server UangKu menjadwalkan background fetch mutasi secara berkala (cth: tiap 6 jam).
+
+## 80.3 Data Model — `bank_connections` & `bank_mutations`
+
+### Tabel `bank_connections`
+| Field | Type | Required | Description |
+|---|---|---|---|
+| id | UUID | Yes | Primary key |
+| user_id | UUID | Yes | Pemilik koneksi |
+| account_id | UUID | Yes | Akun UangKu yang ditautkan |
+| provider | VARCHAR(50) | Yes | `'statement_import'`, `'brick'`, `'ayoconnect'`, `'shortcuts'` |
+| institution_code | VARCHAR(20) | Yes | `'BCA'`, `'MANDIRI'`, `'BRI'`, `'BNI'`, `'GOPAY'`, `'OVO'` |
+| masked_account_number | VARCHAR(30) | No | Nomor rekening tersamarkan (cth: `•••• 4892`) |
+| status | VARCHAR(20) | Yes | `'active'`, `'requires_reauth'`, `'disconnected'` |
+| last_synced_at | TIMESTAMPTZ | No | Waktu sinkronisasi terakhir |
+| metadata | JSONB | No | Pengaturan koneksi atau token sesi terenkripsi |
+| created_at | TIMESTAMPTZ | Yes | Waktu pembuatan |
+| updated_at | TIMESTAMPTZ | Yes | Waktu pembaruan |
+
+### Tabel `bank_mutations`
+| Field | Type | Required | Description |
+|---|---|---|---|
+| id | UUID | Yes | Primary key |
+| connection_id | UUID | Yes | Relasi ke `bank_connections(id)` |
+| external_id | VARCHAR(100) | Yes | ID unik mutasi dari bank (mencegah duplikasi import) |
+| amount | BIGINT | Yes | Nominal mutasi (minor units) |
+| type | VARCHAR(10) | Yes | `'debit'` (pengeluaran), `'credit'` (pemasukan) |
+| description | TEXT | Yes | Berita transfer / deskripsi mutasi mentah |
+| transaction_time | TIMESTAMPTZ | Yes | Waktu transaksi pada catatan bank |
+| reconciliation_status | VARCHAR(20) | Yes | `'pending'`, `'matched'`, `'created_as_new'`, `'ignored'` |
+| matched_transaction_id | UUID | No | Foreign key ke `transactions(id)` jika dicocokkan |
+| created_at | TIMESTAMPTZ | Yes | Waktu mutasi masuk ke sistem |
+
+## 80.4 Smart Reconciliation Engine (Pencegahan Duplikasi)
+
+Saat mutasi bank baru masuk ke UangKu:
+1. **Pemeriksaan External ID:** Jika `external_id` sudah pernah diproses, mutasi diabaikan (*idempotent deduplication*).
+2. **Heuristic Matching Algorithm:**
+   - Memindai transaksi yang sudah dicatat manual oleh user dengan kriteria:
+     - Rentang waktu: $\pm 24\text{ jam}$ dari `transaction_time`.
+     - Nominal: `amount` persis sama.
+     - Akun: `account_id` yang sama.
+     - Tipe: Pengeluaran (`debit` $\to$ `expense`) atau Pemasukan (`credit` $\to$ `income`).
+3. **Hasil Pencocokan:**
+   - **Skor Kecocokan Tinggi ($\ge 90\%$):** Aplikasi menandai transaksi manual dengan status `✓ Terverifikasi Mutasi Bank` dan mengaitkan `matched_transaction_id`.
+   - **Skor Ambigu / Belum Ada Transaksi Manual:** Mutasi masuk ke dalam **Inbox Rekonsiliasi** pada tab Beranda:
+     - Pengguna disajikan pilihan 1-ketuk:
+       - `[Tautkan ke Transaksi X]` (jika ada kemiripan).
+       - `[Catat Sebagai Transaksi Baru]` (aplikasi otomatis mendeteksi kategori berdasarkan teks deskripsi mutasi, misal *"QRIS INDOMARET"* $\to$ Kategori *Belanja Bulanan*).
+       - `[Abaikan / Bukan Transaksi Keuangan]`.
+
+## 80.5 Keamanan & Standar Privasi Apple App Store
+
+1. **Zero Raw Credential Storage:** UangKu tidak pernah meminta, menyimpan, atau mencatat PIN ATM, password m-banking, atau OTP pengguna.
+2. **Kepatuhan Privasi Apple (Guideline 5.1.1):**
+   - Fitur integrasi bersifat opt-in 100%.
+   - Seluruh data mutasi dan koneksi bank wajib dibersihkan secara total (*cascading purge*) apabila pengguna mengeksekusi fitur Hapus Akun.
+3. **Data Masking:** Nomor rekening dan informasi sensitif pada mutasi disamarkan di UI dan log telemetri.
+
+---
+

@@ -6,6 +6,8 @@ import {
 } from '@uangku/contracts';
 import { authMiddleware } from '../../middleware/auth';
 import { successResponse } from '../../middleware/error-handler';
+import { db, schema } from '../../db/client';
+import { eq } from 'drizzle-orm';
 
 export const demoGoals: GoalModel[] = [
   {
@@ -60,6 +62,20 @@ export const goalRoutes = new Elysia({ prefix: '/api/v1/goals' })
     };
 
     demoGoals.unshift(newGoal);
+
+    try {
+      await db.insert(schema.financialGoals).values({
+        id: newGoal.id,
+        userId: user.userId,
+        name: newGoal.name,
+        emoji: newGoal.emoji,
+        targetAmount: newGoal.targetAmount,
+        currentAmount: newGoal.currentAmount,
+        targetDate: newGoal.targetDate,
+        status: newGoal.status,
+      });
+    } catch {}
+
     return successResponse(newGoal);
   })
   .patch('/:id', async ({ params, body, user }) => {
@@ -76,6 +92,17 @@ export const goalRoutes = new Elysia({ prefix: '/api/v1/goals' })
     if (input.status !== undefined) goal.status = input.status;
     goal.updatedAt = new Date().toISOString();
 
+    try {
+      await db.update(schema.financialGoals).set({
+        name: goal.name,
+        emoji: goal.emoji,
+        targetAmount: goal.targetAmount,
+        targetDate: goal.targetDate,
+        status: goal.status,
+        updatedAt: new Date(goal.updatedAt),
+      }).where(eq(schema.financialGoals.id, goal.id));
+    } catch {}
+
     return successResponse(goal);
   })
   .delete('/:id', async ({ params, user }) => {
@@ -86,6 +113,14 @@ export const goalRoutes = new Elysia({ prefix: '/api/v1/goals' })
 
     goal.status = 'archived';
     goal.updatedAt = new Date().toISOString();
+
+    try {
+      await db.update(schema.financialGoals).set({
+        status: 'archived',
+        updatedAt: new Date(goal.updatedAt),
+      }).where(eq(schema.financialGoals.id, goal.id));
+    } catch {}
+
     return successResponse({ id: params.id, archived: true });
   })
   .post('/:id/deposit', async ({ params, body, user, set }) => {
@@ -108,6 +143,14 @@ export const goalRoutes = new Elysia({ prefix: '/api/v1/goals' })
       goal.status = 'achieved';
     }
     goal.updatedAt = new Date().toISOString();
+
+    try {
+      await db.update(schema.financialGoals).set({
+        currentAmount: goal.currentAmount,
+        status: goal.status,
+        updatedAt: new Date(goal.updatedAt),
+      }).where(eq(schema.financialGoals.id, goal.id));
+    } catch {}
 
     return successResponse(goal);
   });

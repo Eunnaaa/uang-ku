@@ -17,6 +17,7 @@ import { Search, Filter, Trash2, X, Cloud, CloudOff, Edit3, Check, Wallet, ZoomI
 import { formatRupiah, type TransactionModel, type CategoryModel } from '@uangku/contracts';
 import { colors } from '../../src/theme/colors';
 import { TransactionItem } from '../../src/components/TransactionItem';
+import { SyncEngine } from '../../src/sync/syncEngine';
 import {
   getLocalTransactions,
   deleteLocalTransaction,
@@ -124,8 +125,14 @@ export default function TransactionsScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadTransactions();
-    setRefreshing(false);
+    try {
+      await SyncEngine.syncAll();
+      await loadTransactions();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleOpenDetail = (tx: TransactionModel) => {

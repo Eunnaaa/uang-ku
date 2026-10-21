@@ -7,6 +7,8 @@ import {
 import { authMiddleware } from '../../middleware/auth';
 import { successResponse } from '../../middleware/error-handler';
 import { demoTransactions } from '../transactions/transaction.route';
+import { db, schema } from '../../db/client';
+import { eq } from 'drizzle-orm';
 
 export const demoRecurringRules: RecurringRuleModel[] = [
   {
@@ -53,6 +55,22 @@ export const recurringRoutes = new Elysia({ prefix: '/api/v1/recurring-rules' })
     };
 
     demoRecurringRules.unshift(newRule);
+
+    try {
+      await db.insert(schema.recurringRules).values({
+        id: newRule.id,
+        userId: user.userId,
+        accountId: newRule.accountId,
+        categoryId: newRule.categoryId || null,
+        type: newRule.type,
+        amount: newRule.amount,
+        frequency: newRule.frequency,
+        note: newRule.note || null,
+        nextDueDate: newRule.nextDueDate,
+        isActive: true,
+      });
+    } catch {}
+
     return successResponse(newRule);
   })
   .patch('/:id', async ({ params, body, user }) => {
@@ -69,6 +87,17 @@ export const recurringRoutes = new Elysia({ prefix: '/api/v1/recurring-rules' })
     if (input.isActive !== undefined) rule.isActive = input.isActive;
     rule.updatedAt = new Date().toISOString();
 
+    try {
+      await db.update(schema.recurringRules).set({
+        amount: rule.amount,
+        frequency: rule.frequency,
+        note: rule.note,
+        nextDueDate: rule.nextDueDate,
+        isActive: rule.isActive,
+        updatedAt: new Date(rule.updatedAt),
+      }).where(eq(schema.recurringRules.id, rule.id));
+    } catch {}
+
     return successResponse(rule);
   })
   .delete('/:id', async ({ params, user }) => {
@@ -78,6 +107,11 @@ export const recurringRoutes = new Elysia({ prefix: '/api/v1/recurring-rules' })
     }
 
     demoRecurringRules.splice(index, 1);
+
+    try {
+      await db.delete(schema.recurringRules).where(eq(schema.recurringRules.id, params.id));
+    } catch {}
+
     return successResponse({ id: params.id, deleted: true });
   })
   .post('/:id/trigger', async ({ params, user }) => {

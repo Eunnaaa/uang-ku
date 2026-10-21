@@ -4,7 +4,7 @@ export const env = {
   DATABASE_URL: process.env.DATABASE_URL || 'postgresql://postgres:admin@localhost:5432/uangku',
   SUPABASE_URL: process.env.SUPABASE_URL || 'https://mock.supabase.co',
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || 'mock-service-role-key',
-  JWT_SECRET: process.env.JWT_SECRET || 'uangku-jwt-secret-key-development',
+  JWT_SECRET: process.env.SUPABASE_JWT_SECRET || process.env.JWT_SECRET || 'uangku-jwt-secret-key-development',
   CORS_ORIGIN: process.env.CORS_ORIGIN || '',
 };
 

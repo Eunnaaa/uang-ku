@@ -10,5 +10,7 @@ export * from './schemas/goals';
 export * from './schemas/templates';
 export * from './schemas/budgets';
 export * from './schemas/recurring';
+export * from './schemas/pockets';
+export * from './schemas/bankConnections';
 export * from './utils/money';
 export * from './utils/csv';

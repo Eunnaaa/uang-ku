@@ -6,6 +6,8 @@ import {
 } from '@uangku/contracts';
 import { authMiddleware } from '../../middleware/auth';
 import { successResponse } from '../../middleware/error-handler';
+import { db, schema } from '../../db/client';
+import { eq } from 'drizzle-orm';
 
 export const demoTemplates: TemplateModel[] = [
   {
@@ -78,6 +80,18 @@ export const templateRoutes = new Elysia({ prefix: '/api/v1/templates' })
     };
 
     demoTemplates.unshift(newTemplate);
+
+    try {
+      await db.insert(schema.transactionTemplates).values({
+        id: newTemplate.id,
+        userId: user.userId,
+        name: newTemplate.name,
+        templatePayload: newTemplate.templatePayload,
+        sortOrder: newTemplate.sortOrder,
+        useCount: 0,
+      });
+    } catch {}
+
     return successResponse(newTemplate);
   })
   .patch('/:id', async ({ params, body, user }) => {
@@ -97,6 +111,15 @@ export const templateRoutes = new Elysia({ prefix: '/api/v1/templates' })
     if (input.sortOrder !== undefined) template.sortOrder = input.sortOrder;
     template.updatedAt = new Date().toISOString();
 
+    try {
+      await db.update(schema.transactionTemplates).set({
+        name: template.name,
+        templatePayload: template.templatePayload,
+        sortOrder: template.sortOrder,
+        updatedAt: new Date(template.updatedAt),
+      }).where(eq(schema.transactionTemplates.id, template.id));
+    } catch {}
+
     return successResponse(template);
   })
   .delete('/:id', async ({ params, user }) => {
@@ -106,6 +129,11 @@ export const templateRoutes = new Elysia({ prefix: '/api/v1/templates' })
     }
 
     demoTemplates.splice(index, 1);
+
+    try {
+      await db.delete(schema.transactionTemplates).where(eq(schema.transactionTemplates.id, params.id));
+    } catch {}
+
     return successResponse({ id: params.id, deleted: true });
   })
   .post('/:id/use', async ({ params, user }) => {
@@ -116,5 +144,13 @@ export const templateRoutes = new Elysia({ prefix: '/api/v1/templates' })
 
     template.useCount += 1;
     template.updatedAt = new Date().toISOString();
+
+    try {
+      await db.update(schema.transactionTemplates).set({
+        useCount: template.useCount,
+        updatedAt: new Date(template.updatedAt),
+      }).where(eq(schema.transactionTemplates.id, template.id));
+    } catch {}
+
     return successResponse(template);
   });

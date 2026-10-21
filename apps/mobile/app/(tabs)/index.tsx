@@ -21,6 +21,7 @@ import {
   Target,
   Repeat,
   Receipt,
+  Layers,
 } from 'lucide-react-native';
 import { type TransactionModel, type AccountModel, formatRupiah } from '@uangku/contracts';
 import * as SecureStore from 'expo-secure-store';
@@ -31,6 +32,7 @@ import {
   getLocalTransactions,
   getLocalAccounts,
   getLocalDashboardSummary,
+  getLocalBankMutations,
 } from '../../src/db/sqlite';
 import { SyncEngine } from '../../src/sync/syncEngine';
 import { hapticMedium, hapticSelection } from '../../src/theme/haptics';
@@ -73,20 +75,23 @@ export default function HomeScreen() {
     availableNetWorth: 0,
     totalReserved: 0,
   });
+  const [pendingMutationsCount, setPendingMutationsCount] = useState<number>(0);
 
   const loadData = useCallback(async () => {
     try {
       const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
-      const [accs, txs, sum, maskPref] = await Promise.all([
+      const [accs, txs, sum, maskPref, pendingMuts] = await Promise.all([
         getLocalAccounts(),
         getLocalTransactions(),
         getLocalDashboardSummary(currentMonth),
         SecureStore.getItemAsync('uangku_privacy_mask_balance'),
+        getLocalBankMutations('pending'),
       ]);
       setAccounts(accs);
       setRecentTransactions(txs.slice(0, 5));
       setSummary(sum);
       setIsPrivacyMasked(maskPref === '1');
+      setPendingMutationsCount(pendingMuts.length);
     } catch (err) {
       console.error('Failed to load local data:', err);
     }
@@ -99,7 +104,7 @@ export default function HomeScreen() {
   const onRefresh = async () => {
     setRefreshing(true);
     try {
-      await SyncEngine.processOutbox();
+      await SyncEngine.syncAll();
       await loadData();
     } catch (err) {
       console.error(err);
@@ -221,7 +226,7 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </ScrollView>
 
-        {/* Quick Tools Grid */}
+        {/* Quick Tools Grid (6 Tools) */}
         <View style={styles.quickToolsRow}>
           <TouchableOpacity
             style={styles.quickToolBtn}
@@ -264,7 +269,9 @@ export default function HomeScreen() {
             </View>
             <Text style={styles.quickToolLabel}>Berulang</Text>
           </TouchableOpacity>
+        </View>
 
+        <View style={[styles.quickToolsRow, { marginTop: 8 }]}>
           <TouchableOpacity
             style={styles.quickToolBtn}
             activeOpacity={0.75}
@@ -278,7 +285,63 @@ export default function HomeScreen() {
             </View>
             <Text style={styles.quickToolLabel}>Split Bill</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.quickToolBtn}
+            activeOpacity={0.75}
+            onPress={() => {
+              hapticSelection();
+              router.push('/pockets');
+            }}
+          >
+            <View style={styles.quickToolIconBg}>
+              <Layers size={16} color={colors.gold.champagne} />
+            </View>
+            <Text style={styles.quickToolLabel}>Kantong</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.quickToolBtn}
+            activeOpacity={0.75}
+            onPress={() => {
+              hapticSelection();
+              router.push('/bank-sync');
+            }}
+          >
+            <View style={styles.quickToolIconBg}>
+              <Landmark size={16} color={colors.gold.champagne} />
+            </View>
+            <Text style={styles.quickToolLabel}>Bank Sync</Text>
+          </TouchableOpacity>
         </View>
+
+        {/* Smart Reconciliation Inbox Banner (PRD Section 80.4) */}
+        {pendingMutationsCount > 0 && (
+          <TouchableOpacity
+            style={styles.reconcileInboxCard}
+            activeOpacity={0.8}
+            onPress={() => {
+              hapticSelection();
+              router.push('/bank-sync');
+            }}
+          >
+            <View style={styles.reconcileInboxLeft}>
+              <View style={styles.reconcileInboxIconWrap}>
+                <Landmark size={18} color={colors.gold.champagne} />
+              </View>
+              <View style={styles.reconcileInboxTextCol}>
+                <Text style={styles.reconcileInboxTitle}>Inbox Rekonsiliasi Bank</Text>
+                <Text style={styles.reconcileInboxSub}>
+                  {pendingMutationsCount} mutasi baru menunggu konfirmasi & pencocokan
+                </Text>
+              </View>
+            </View>
+            <View style={styles.reconcileInboxAction}>
+              <Text style={styles.reconcileInboxActionText}>Tinjau</Text>
+              <ChevronRight size={14} color={colors.gold.champagne} />
+            </View>
+          </TouchableOpacity>
+        )}
 
         {/* Recent Transactions Section */}
         <View style={styles.sectionHeader}>
@@ -510,6 +573,56 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     color: colors.text.secondary,
+  },
+  reconcileInboxCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#161925',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(212, 175, 55, 0.35)',
+    marginBottom: 20,
+  },
+  reconcileInboxLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  reconcileInboxIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: 'rgba(212, 175, 55, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reconcileInboxTextCol: {
+    flex: 1,
+  },
+  reconcileInboxTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.gold.champagne,
+  },
+  reconcileInboxSub: {
+    fontSize: 11.5,
+    color: colors.text.muted,
+    marginTop: 2,
+  },
+  reconcileInboxAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingLeft: 8,
+  },
+  reconcileInboxActionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.gold.champagne,
   },
   emptyContainer: {
     padding: 30,
