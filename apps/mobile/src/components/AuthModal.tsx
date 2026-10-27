@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,8 @@ import {
   ScrollView,
 } from 'react-native';
 import { Sparkles, Mail, Lock, User, X, ArrowRight, ShieldCheck } from 'lucide-react-native';
-import { colors } from '../theme/colors';
+import { colors, type ThemeColors } from '../theme/colors';
+import { useTheme } from '../theme/themeContext';
 import { useAuth } from '../auth/authContext';
 import { hapticMedium, hapticSelection, hapticSuccess, hapticError } from '../theme/haptics';
 
@@ -22,6 +23,8 @@ interface AuthModalProps {
 }
 
 export function AuthModal({ visible, onClose }: AuthModalProps) {
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
   const { login, register, continueAsGuest } = useAuth();
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
@@ -177,13 +180,13 @@ export function AuthModal({ visible, onClose }: AuthModalProps) {
               disabled={isLoading}
             >
               {isLoading ? (
-                <ActivityIndicator color="#090A0E" />
+                <ActivityIndicator color={isDark ? '#090A0E' : '#FFFFFF'} />
               ) : (
                 <>
                   <Text style={styles.primaryBtnText}>
                     {mode === 'login' ? 'Masuk ke Akun' : 'Daftar Sekarang'}
                   </Text>
-                  <ArrowRight size={16} color="#090A0E" strokeWidth={2.5} />
+                  <ArrowRight size={16} color={isDark ? '#090A0E' : '#FFFFFF'} strokeWidth={2.5} />
                 </>
               )}
             </TouchableOpacity>
@@ -200,14 +203,15 @@ export function AuthModal({ visible, onClose }: AuthModalProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) =>
+  StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(9, 10, 14, 0.75)',
+    backgroundColor: isDark ? 'rgba(9, 10, 14, 0.75)' : 'rgba(15, 23, 42, 0.5)',
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: 22,
@@ -216,14 +220,14 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderLeftWidth: 1,
     borderRightWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
+    borderColor: colors.gold.hairline,
     maxHeight: '85%',
   },
   handle: {
     width: 40,
     height: 4,
     borderRadius: 2,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.2)',
     alignSelf: 'center',
     marginBottom: 16,
   },
@@ -257,7 +261,7 @@ const styles = StyleSheet.create({
   closeBtn: {
     padding: 6,
     borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
   },
   headline: {
     fontSize: 22,
@@ -274,12 +278,12 @@ const styles = StyleSheet.create({
   },
   segmentRow: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    backgroundColor: colors.bg.elevated,
     borderRadius: 14,
     padding: 4,
     marginBottom: 18,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: colors.border.subtle,
   },
   segmentBtn: {
     flex: 1,
@@ -314,12 +318,12 @@ const styles = StyleSheet.create({
   inputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#090A0E',
+    backgroundColor: colors.bg.elevated,
     borderRadius: 14,
     paddingHorizontal: 14,
     height: 48,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.border.subtle,
     gap: 10,
   },
   textInput: {
@@ -345,7 +349,7 @@ const styles = StyleSheet.create({
   primaryBtnText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
   },
   guestBtn: {
     flexDirection: 'row',

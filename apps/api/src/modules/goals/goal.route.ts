@@ -9,32 +9,7 @@ import { successResponse } from '../../middleware/error-handler';
 import { db, schema } from '../../db/client';
 import { eq } from 'drizzle-orm';
 
-export const demoGoals: GoalModel[] = [
-  {
-    id: 'g1000000-0000-0000-0000-000000000001',
-    userId: '00000000-0000-0000-0000-000000000001',
-    name: 'Dana Darurat 6 Bulan',
-    emoji: '🛡️',
-    targetAmount: 30000000,
-    currentAmount: 12000000,
-    targetDate: '2027-12-31',
-    status: 'active',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'g2000000-0000-0000-0000-000000000002',
-    userId: '00000000-0000-0000-0000-000000000001',
-    name: 'MacBook Pro M-Series',
-    emoji: '💻',
-    targetAmount: 25000000,
-    currentAmount: 8500000,
-    targetDate: '2027-06-30',
-    status: 'active',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
+export const demoGoals: GoalModel[] = [];
 
 export const goalRoutes = new Elysia({ prefix: '/api/v1/goals' })
   .use(authMiddleware)
@@ -52,7 +27,7 @@ export const goalRoutes = new Elysia({ prefix: '/api/v1/goals' })
       id: crypto.randomUUID(),
       userId: user.userId,
       name: input.name,
-      emoji: input.emoji ?? '🎯',
+      emoji: input.emoji ?? 'target',
       targetAmount: input.targetAmount,
       currentAmount: initialAmount,
       targetDate: input.targetDate ?? null,

@@ -26,7 +26,8 @@ import {
   CreditCard,
 } from 'lucide-react-native';
 import { formatRupiah, parseRupiah } from '@uangku/contracts';
-import { colors } from '../../src/theme/colors';
+import { colors, type ThemeColors } from '../../src/theme/colors';
+import { useTheme } from '../../src/theme/themeContext';
 import { hapticMedium, hapticSelection, hapticSuccess, hapticLight } from '../../src/theme/haptics';
 import { useToast } from '../../src/components/Toast';
 
@@ -41,12 +42,14 @@ type SplitMode = 'equal' | 'custom';
 export default function SplitBillScreen() {
   const router = useRouter();
   const toast = useToast();
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
 
   const [splitMode, setSplitMode] = useState<SplitMode>('equal');
-  const [subtotalInput, setSubtotalInput] = useState('150000');
-  const [taxPercent, setTaxPercent] = useState<number | null>(11); // 11% PB1/PPN
-  const [servicePercent, setServicePercent] = useState<number | null>(5); // 5% Service charge
-  const [bankInfo, setBankInfo] = useState('BCA 12345678 a/n Gary');
+  const [subtotalInput, setSubtotalInput] = useState('');
+  const [taxPercent, setTaxPercent] = useState<number | null>(null);
+  const [servicePercent, setServicePercent] = useState<number | null>(null);
+  const [bankInfo, setBankInfo] = useState('');
 
   const [participants, setParticipants] = useState<Participant[]>([
     { id: '1', name: 'Saya' },
@@ -108,12 +111,13 @@ export default function SplitBillScreen() {
         };
       });
 
-      // Distribute fee remainder
+      // Distribute fee remainder with safe wrap-around
       const feeRemainder = extraFees - allocatedFeeSum;
-      for (let i = 0; i < feeRemainder; i++) {
-        if (shares[i]) {
-          shares[i].totalShare += 1;
-          shares[i].hasRoundingAdjustment = true;
+      if (shares.length > 0) {
+        for (let i = 0; i < feeRemainder; i++) {
+          const idx = i % shares.length;
+          shares[idx].totalShare += 1;
+          shares[idx].hasRoundingAdjustment = true;
         }
       }
 
@@ -164,7 +168,7 @@ export default function SplitBillScreen() {
   const handleShareToWhatsApp = async () => {
     hapticMedium();
     const lines = [
-      `🧾 *RINCIAN SPLIT BILL UANGKU*`,
+      `*RINCIAN SPLIT BILL UANGKU*`,
       `Total Tagihan: ${formatRupiah(calculationResult.grandTotal)}`,
       `• Subtotal: ${formatRupiah(calculationResult.subtotal)}`,
     ];
@@ -182,7 +186,7 @@ export default function SplitBillScreen() {
     });
 
     if (bankInfo.trim()) {
-      lines.push(`\n💳 *Info Transfer:*\n${bankInfo.trim()}`);
+      lines.push(`\n*Info Transfer:*\n${bankInfo.trim()}`);
     }
 
     lines.push(`\n_Dihitung akurat hingga Rp 1 dengan UangKu App._`);
@@ -287,7 +291,7 @@ export default function SplitBillScreen() {
               setSplitMode('equal');
             }}
           >
-            <Users size={14} color={splitMode === 'equal' ? '#090A0E' : colors.text.secondary} />
+            <Users size={14} color={splitMode === 'equal' ? (isDark ? '#090A0E' : '#FFFFFF') : colors.text.secondary} />
             <Text style={[styles.modeTabText, splitMode === 'equal' && styles.modeTabTextActive]}>
               Bagi Rata (Equal)
             </Text>
@@ -300,7 +304,7 @@ export default function SplitBillScreen() {
               setSplitMode('custom');
             }}
           >
-            <Percent size={14} color={splitMode === 'custom' ? '#090A0E' : colors.text.secondary} />
+            <Percent size={14} color={splitMode === 'custom' ? (isDark ? '#090A0E' : '#FFFFFF') : colors.text.secondary} />
             <Text style={[styles.modeTabText, splitMode === 'custom' && styles.modeTabTextActive]}>
               Porsi Itemized / Kustom
             </Text>
@@ -499,7 +503,7 @@ export default function SplitBillScreen() {
             <CreditCard size={16} color={colors.gold.champagne} />
             <TextInput
               style={styles.bankTextInput}
-              placeholder="cth. BCA 12345678 a/n Gary"
+              placeholder="Cth: BCA 12345678 a/n Nama Anda"
               placeholderTextColor={colors.text.muted}
               value={bankInfo}
               onChangeText={setBankInfo}
@@ -515,12 +519,12 @@ export default function SplitBillScreen() {
             onPress={handleRecordMyShare}
           >
             <View style={styles.btnContentRow}>
-              <Sparkles size={16} color="#090A0E" />
+              <Sparkles size={16} color={isDark ? '#090A0E' : '#FFFFFF'} />
               <Text style={styles.recordMyShareText}>
                 Catat Porsi Saya ({formatRupiah(calculationResult.shares[0]?.totalShare || 0)})
               </Text>
             </View>
-            <ArrowRight size={16} color="#090A0E" />
+            <ArrowRight size={16} color={isDark ? '#090A0E' : '#FFFFFF'} />
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -537,7 +541,8 @@ export default function SplitBillScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) =>
+  StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.bg.base,
@@ -659,7 +664,7 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
   },
   modeTabTextActive: {
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
     fontWeight: '700',
   },
   inputGroup: {
@@ -826,7 +831,7 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
   },
   avatarTextMe: {
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
   },
   personNameInput: {
     fontSize: 14,
@@ -916,7 +921,7 @@ const styles = StyleSheet.create({
   recordMyShareText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
   },
   shareWhatsAppBtn: {
     flexDirection: 'row',

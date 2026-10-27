@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { AppState, View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { AppState, View, Text, TouchableOpacity, StyleSheet, Linking, Modal } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Stack } from 'expo-router';
 import { BlurView } from 'expo-blur';
-import { ShieldCheck, Lock, KeyRound, Delete } from 'lucide-react-native';
+import { ShieldCheck, Lock, KeyRound, Delete, Sparkles } from 'lucide-react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import { colors, type ThemeColors } from '../src/theme/colors';
@@ -14,6 +14,7 @@ import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { WelcomeFlow } from '../src/components/WelcomeFlow';
 import { ThemeProvider, useTheme } from '../src/theme/themeContext';
 import { hapticMedium, hapticSuccess, hapticError, hapticLight, hapticSelection } from '../src/theme/haptics';
+import { AppConfigService, type VersionCheckResult } from '../src/services/appConfigService';
 
 const BIOMETRIC_PREF_KEY = 'uangku_biometric_enabled';
 const PIN_STORAGE_KEY = 'uangku_app_pin_hash';
@@ -24,6 +25,7 @@ function RootAppContent() {
   const [isPrivacyShieldActive, setIsPrivacyShieldActive] = useState(false);
   const [isBiometricLocked, setIsBiometricLocked] = useState(false);
   const [isWelcomeFlowVisible, setIsWelcomeFlowVisible] = useState(false);
+  const [versionCheck, setVersionCheck] = useState<VersionCheckResult | null>(null);
   const [isPinScreenVisible, setIsPinScreenVisible] = useState(false);
   const [enteredPin, setEnteredPin] = useState('');
   const [failedPinAttempts, setFailedPinAttempts] = useState(0);
@@ -118,6 +120,7 @@ function RootAppContent() {
   useEffect(() => {
     getDb().catch(console.error);
     authenticateBiometric();
+    AppConfigService.checkVersion().then(setVersionCheck).catch(() => {});
 
     SecureStore.getItemAsync(HAS_SEEN_ONBOARDING_KEY)
       .then((seen) => {
@@ -312,6 +315,30 @@ function RootAppContent() {
         onClose={handleCompleteWelcomeFlow}
         startWithAnimation={true}
       />
+
+      {/* PRD Section 77: Force Update Modal */}
+      {versionCheck?.isForceUpdateRequired && (
+        <Modal visible={true} transparent={false} animationType="fade">
+          <View style={[styles.forceUpdateContainer, { backgroundColor: colors.bg.base }]}>
+            <View style={styles.forceUpdateCard}>
+              <View style={styles.forceUpdateIconCircle}>
+                <Sparkles size={40} color={colors.gold.primary} />
+              </View>
+              <Text style={styles.forceUpdateTitle}>Pembaruan Wajib Tersedia</Text>
+              <Text style={styles.forceUpdateMessage}>
+                {versionCheck.forceUpdateMessage || 'Versi aplikasi ini sudah tidak didukung. Silakan perbarui UangKu di App Store untuk melanjutkan.'}
+              </Text>
+              <TouchableOpacity
+                style={styles.forceUpdateBtn}
+                activeOpacity={0.8}
+                onPress={() => Linking.openURL(versionCheck.storeUrl || 'https://apps.apple.com')}
+              >
+                <Text style={styles.forceUpdateBtnText}>Perbarui Sekarang</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
     </>
   );
 }
@@ -454,5 +481,55 @@ const createStyles = (colors: ThemeColors, isDark: boolean) =>
       fontSize: 20,
       fontWeight: '600',
       color: colors.text.primary,
+    },
+    forceUpdateContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: 28,
+    },
+    forceUpdateCard: {
+      width: '100%',
+      backgroundColor: isDark ? 'rgba(255, 255, 255, 0.04)' : colors.bg.elevated,
+      borderRadius: 24,
+      padding: 24,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(212, 175, 55, 0.25)' : 'rgba(180, 83, 9, 0.2)',
+    },
+    forceUpdateIconCircle: {
+      width: 76,
+      height: 76,
+      borderRadius: 38,
+      backgroundColor: isDark ? 'rgba(212, 175, 55, 0.12)' : 'rgba(180, 83, 9, 0.08)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    forceUpdateTitle: {
+      fontSize: 20,
+      fontWeight: '800',
+      color: colors.text.primary,
+      textAlign: 'center',
+      marginBottom: 10,
+    },
+    forceUpdateMessage: {
+      fontSize: 14,
+      color: colors.text.secondary,
+      textAlign: 'center',
+      lineHeight: 22,
+      marginBottom: 24,
+    },
+    forceUpdateBtn: {
+      backgroundColor: colors.gold.primary,
+      width: '100%',
+      paddingVertical: 14,
+      borderRadius: 14,
+      alignItems: 'center',
+    },
+    forceUpdateBtnText: {
+      color: '#090A0E',
+      fontSize: 15,
+      fontWeight: '700',
     },
   });

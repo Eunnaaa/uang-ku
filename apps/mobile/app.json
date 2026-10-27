@@ -6,11 +6,6 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "icon": "./assets/icon.png",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#090A0E"
-    },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.uangku.ios",
@@ -46,7 +41,17 @@
       "expo-notifications",
       "expo-asset",
       "expo-font",
-      "expo-image-picker"
+      "expo-image-picker",
+      "expo-sharing",
+      "expo-status-bar",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#090A0E"
+        }
+      ]
     ],
     "scheme": "uangku"
   }

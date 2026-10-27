@@ -12,45 +12,9 @@ import { demoTransactions } from '../transactions/transaction.route';
 import { db, schema } from '../../db/client';
 import { eq, and } from 'drizzle-orm';
 
-export const demoBankConnections: BankConnectionModel[] = [
-  {
-    id: 'bc100000-0000-4000-8000-000000000001',
-    userId: '00000000-0000-0000-0000-000000000001',
-    accountId: 'a2000000-0000-0000-0000-000000000002', // BCA Utama
-    provider: 'statement_import',
-    institutionCode: 'BCA',
-    maskedAccountNumber: '•••• 4892',
-    status: 'active',
-    lastSyncedAt: new Date().toISOString(),
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
+export const demoBankConnections: BankConnectionModel[] = [];
 
-export const demoBankMutations: BankMutationModel[] = [
-  {
-    id: 'bm100000-0000-4000-8000-000000000001',
-    connectionId: 'bc100000-0000-4000-8000-000000000001',
-    externalId: 'BCA-TX-20261020-001',
-    amount: 120000,
-    type: 'debit',
-    description: 'QRIS INDOMARET JAKARTA',
-    transactionTime: new Date(Date.now() - 3600000 * 5).toISOString(),
-    reconciliationStatus: 'pending',
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'bm200000-0000-4000-8000-000000000002',
-    connectionId: 'bc100000-0000-4000-8000-000000000001',
-    externalId: 'BCA-TX-20261020-002',
-    amount: 5000000,
-    type: 'credit',
-    description: 'TRSF DR PT TEKNOLOGI UTAMA GAJI',
-    transactionTime: new Date(Date.now() - 3600000 * 20).toISOString(),
-    reconciliationStatus: 'pending',
-    createdAt: new Date().toISOString(),
-  },
-];
+export const demoBankMutations: BankMutationModel[] = [];
 
 export const bankConnectionRoutes = new Elysia({ prefix: '/api/v1' })
   .use(errorHandler)

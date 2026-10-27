@@ -63,7 +63,7 @@ export class NotificationService {
       await Notifications.scheduleNotificationAsync({
         identifier: DAILY_REMINDER_ID,
         content: {
-          title: 'Waktunya Catat Keuangan Hari Ini ✍️',
+          title: 'Waktunya Catat Keuangan Hari Ini',
           body: 'Sudahkah kamu mencatat pengeluaranmu hari ini? Jaga stabilitas finansialmu bersama UangKu.',
           sound: true,
         },
@@ -106,7 +106,7 @@ export class NotificationService {
       await Notifications.scheduleNotificationAsync({
         identifier,
         content: {
-          title: `Tagihan Jatuh Tempo: ${title} 🔔`,
+          title: `Tagihan Jatuh Tempo: ${title}`,
           body: `Tagihan sebesar ${amountStr} jatuh tempo hari ini. Buka UangKu untuk verifikasi pembayaran.`,
           sound: true,
         },

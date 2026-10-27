@@ -11,8 +11,12 @@ import {
   type TemplatePayload,
   type PocketModel,
   type PocketType,
+  type PocketMemberModel,
+  type PocketContributionModel,
+  type PocketMemberRole,
   type BankConnectionModel,
   type BankMutationModel,
+  type TransactionHistoryModel,
 } from '@uangku/contracts';
 export type {
   GoalModel,
@@ -22,12 +26,54 @@ export type {
   TemplatePayload,
   PocketModel,
   PocketType,
+  PocketMemberModel,
+  PocketContributionModel,
+  PocketMemberRole,
   BankConnectionModel,
   BankMutationModel,
+  TransactionHistoryModel,
 };
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
+let dbInitPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 let currentActiveUserId = '00000000-0000-0000-0000-000000000001';
+let hasAppliedCleanReset2026 = false;
+
+export const AUTO_RESET_METADATA_KEY = 'auto_clean_reset_v20261026_zero_state';
+
+export async function ensureAutomaticWipe(db: SQLite.SQLiteDatabase): Promise<void> {
+  try {
+    const isCleaned = await db.getFirstAsync<{ value: string }>(
+      `SELECT value FROM sync_metadata WHERE key = ?;`,
+      [AUTO_RESET_METADATA_KEY]
+    );
+    if (!isCleaned) {
+      await db.execAsync(`
+        DELETE FROM local_transactions;
+        DELETE FROM mutation_outbox;
+        DELETE FROM local_goals;
+        DELETE FROM local_recurring_rules;
+        DELETE FROM local_templates;
+        DELETE FROM local_budgets;
+        DELETE FROM local_pockets;
+        DELETE FROM local_pocket_members;
+        DELETE FROM local_pocket_contributions;
+        DELETE FROM local_bank_connections;
+        DELETE FROM local_bank_mutations;
+        DELETE FROM local_transaction_history;
+        DELETE FROM local_accounts WHERE id NOT IN (
+          'a1000000-0000-0000-0000-000000000001',
+          'a2000000-0000-0000-0000-000000000002',
+          'a3000000-0000-0000-0000-000000000003'
+        );
+        UPDATE local_accounts SET initial_balance = 0, reserved_amount = 0;
+        INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('${AUTO_RESET_METADATA_KEY}', '1', datetime('now'));
+      `);
+    }
+  } catch (err) {
+    console.warn('ensureAutomaticWipe error:', err);
+  }
+}
 
 export function getActiveUserId(): string {
   return currentActiveUserId;
@@ -40,11 +86,29 @@ export function setActiveUserId(userId: string): void {
 }
 
 export async function getDb(): Promise<SQLite.SQLiteDatabase> {
-  if (!dbInstance) {
-    dbInstance = await SQLite.openDatabaseAsync('uangku_v1.db');
-    await initLocalDatabase(dbInstance);
+  if (dbInstance) {
+    if (!hasAppliedCleanReset2026) {
+      hasAppliedCleanReset2026 = true;
+      await ensureAutomaticWipe(dbInstance);
+    }
+    return dbInstance;
   }
-  return dbInstance;
+  if (!dbInitPromise) {
+    dbInitPromise = (async () => {
+      try {
+        const db = await SQLite.openDatabaseAsync('uangku_v1.db');
+        await initLocalDatabase(db);
+        await ensureAutomaticWipe(db);
+        hasAppliedCleanReset2026 = true;
+        dbInstance = db;
+        return db;
+      } catch (err) {
+        dbInitPromise = null;
+        throw err;
+      }
+    })();
+  }
+  return dbInitPromise;
 }
 
 export async function initLocalDatabase(db: SQLite.SQLiteDatabase): Promise<void> {
@@ -230,7 +294,64 @@ export async function initLocalDatabase(db: SQLite.SQLiteDatabase): Promise<void
     );
 
     CREATE INDEX IF NOT EXISTS idx_bank_mut_conn ON local_bank_mutations(connection_id, reconciliation_status);
+
+    CREATE TABLE IF NOT EXISTS local_pocket_members (
+      id TEXT PRIMARY KEY,
+      pocket_id TEXT NOT NULL,
+      user_id TEXT,
+      name TEXT NOT NULL,
+      avatar_emoji TEXT DEFAULT 'user',
+      role TEXT NOT NULL DEFAULT 'contributor',
+      total_contributed INTEGER NOT NULL DEFAULT 0,
+      joined_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pocket_members ON local_pocket_members(pocket_id);
+
+    CREATE TABLE IF NOT EXISTS local_pocket_contributions (
+      id TEXT PRIMARY KEY,
+      pocket_id TEXT NOT NULL,
+      member_id TEXT,
+      member_name TEXT NOT NULL,
+      member_avatar TEXT DEFAULT 'user',
+      amount INTEGER NOT NULL,
+      note TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pocket_contribs ON local_pocket_contributions(pocket_id);
+
+    CREATE TABLE IF NOT EXISTS local_transaction_history (
+      id TEXT PRIMARY KEY,
+      transaction_id TEXT NOT NULL,
+      changed_by TEXT NOT NULL DEFAULT 'user',
+      snapshot_before TEXT NOT NULL,
+      snapshot_after TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      changed_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tx_hist_id ON local_transaction_history(transaction_id, changed_at DESC);
   `);
+
+  // Migration for color, is_hidden, and sort_order on local_accounts (PRD Section 73)
+  try {
+    await db.execAsync(`ALTER TABLE local_accounts ADD COLUMN color TEXT DEFAULT '#D4AF37';`);
+  } catch {}
+  try {
+    await db.execAsync(`ALTER TABLE local_accounts ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;`);
+  } catch {}
+  try {
+    await db.execAsync(`ALTER TABLE local_accounts ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;`);
+  } catch {}
+
+  // Migration for is_shared and invite_code on local_pockets
+  try {
+    await db.execAsync(`ALTER TABLE local_pockets ADD COLUMN is_shared INTEGER NOT NULL DEFAULT 0;`);
+  } catch {}
+  try {
+    await db.execAsync(`ALTER TABLE local_pockets ADD COLUMN invite_code TEXT;`);
+  } catch {}
 
   // Migration for pocket_id on local_transactions (PRD Section 79.3)
   try {
@@ -238,27 +359,6 @@ export async function initLocalDatabase(db: SQLite.SQLiteDatabase): Promise<void
   } catch {
     // Column already exists
   }
-
-  // Migrate legacy budgets from sync_metadata if local_budgets is empty
-  try {
-    const budgetCount = await db.getFirstAsync<{ count: number }>('SELECT count(*) as count FROM local_budgets;');
-    if (!budgetCount || budgetCount.count === 0) {
-      const metaRow = await db.getFirstAsync<{ value: string }>(`SELECT value FROM sync_metadata WHERE key = 'budgets_v1';`);
-      if (metaRow?.value) {
-        const oldBudgets = JSON.parse(metaRow.value);
-        const now = new Date().toISOString();
-        for (const [catId, limit] of Object.entries(oldBudgets)) {
-          if (typeof limit === 'number' && limit > 0) {
-            await db.runAsync(
-              `INSERT OR REPLACE INTO local_budgets (id, user_id, category_id, amount, currency, period, is_active, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 'IDR', 'monthly', 1, ?, ?);`,
-              [crypto.randomUUID(), currentActiveUserId, catId, limit, now, now]
-            );
-          }
-        }
-      }
-    }
-  } catch {}
 
   // Migration for reserved_amount if missing
   try {
@@ -274,18 +374,8 @@ export async function initLocalDatabase(db: SQLite.SQLiteDatabase): Promise<void
     // Column already exists
   }
 
-  // Automatic purge of dummy records from earlier development runs
-  try {
-    await db.execAsync(`
-      DELETE FROM local_transactions WHERE id IN ('t1', 't2', 't3');
-      DELETE FROM local_goals WHERE id IN ('g1', 'g2');
-      DELETE FROM local_recurring_rules WHERE id IN ('r1', 'r2');
-      UPDATE local_accounts SET initial_balance = 0, reserved_amount = 0 WHERE id IN ('a1000000-0000-0000-0000-000000000001', 'a2000000-0000-0000-0000-000000000002', 'a3000000-0000-0000-0000-000000000003');
-      DELETE FROM mutation_outbox WHERE client_id IN ('cl-1', 'cl-2', 'cl-3');
-    `);
-  } catch {
-    // Ignore cleanup error if tables not yet populated
-  }
+  // Automatic purge of dummy/test records and clean reset to zero
+  await ensureAutomaticWipe(db);
 
   await seedDefaultData(db);
 }
@@ -295,7 +385,7 @@ async function seedDefaultData(db: SQLite.SQLiteDatabase): Promise<void> {
   if (!accountCount || accountCount.count === 0) {
     const now = new Date().toISOString();
     await db.runAsync(
-      `INSERT INTO local_accounts (id, user_id, name, type, currency, initial_balance, reserved_amount, is_default, is_archived, created_at, updated_at) VALUES
+      `INSERT OR IGNORE INTO local_accounts (id, user_id, name, type, currency, initial_balance, reserved_amount, is_default, is_archived, created_at, updated_at) VALUES
        ('a1000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'Dompet Tunai', 'cash', 'IDR', 0, 0, 1, 0, ?, ?),
        ('a2000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'BCA Utama', 'bank', 'IDR', 0, 0, 0, 0, ?, ?),
        ('a3000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 'GoPay', 'e_wallet', 'IDR', 0, 0, 0, 0, ?, ?);`,
@@ -307,7 +397,7 @@ async function seedDefaultData(db: SQLite.SQLiteDatabase): Promise<void> {
   if (!categoryCount || categoryCount.count === 0) {
     const now = new Date().toISOString();
     await db.runAsync(
-      `INSERT INTO local_categories (id, user_id, name, type, icon, is_system, is_archived, created_at, updated_at) VALUES
+      `INSERT OR IGNORE INTO local_categories (id, user_id, name, type, icon, is_system, is_archived, created_at, updated_at) VALUES
        ('c1000000-0000-0000-0000-000000000001', NULL, 'Makanan & Minuman', 'expense', 'utensils', 1, 0, ?, ?),
        ('c1000000-0000-0000-0000-000000000002', NULL, 'Transportasi', 'expense', 'car', 1, 0, ?, ?),
        ('c1000000-0000-0000-0000-000000000003', NULL, 'Belanja & Kebutuhan', 'expense', 'shopping-bag', 1, 0, ?, ?),
@@ -337,10 +427,13 @@ export async function clearAllLocalTransactions(): Promise<void> {
     DELETE FROM local_templates;
     DELETE FROM local_budgets;
     DELETE FROM local_pockets;
+    DELETE FROM local_pocket_members;
+    DELETE FROM local_pocket_contributions;
     DELETE FROM local_bank_connections;
     DELETE FROM local_bank_mutations;
     DELETE FROM sync_metadata;
     UPDATE local_accounts SET initial_balance = 0, reserved_amount = 0;
+    INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES ('${AUTO_RESET_METADATA_KEY}', '1', datetime('now'));
   `);
 }
 
@@ -409,6 +502,59 @@ export async function getLocalTransactions(filter?: { type?: string; accountId?:
   }));
 }
 
+export async function getLocalTransactionById(id: string): Promise<TransactionModel | null> {
+  const db = await getDb();
+  const query = `
+    SELECT 
+      t.*,
+      a.name as account_name, a.type as account_type,
+      da.name as dest_account_name, da.type as dest_account_type,
+      c.name as category_name, c.icon as category_icon,
+      p.name as pocket_name, p.emoji as pocket_emoji, p.type as pocket_type,
+      CASE WHEN bm.matched_transaction_id IS NOT NULL THEN 1 ELSE 0 END as is_bank_verified
+    FROM local_transactions t
+    LEFT JOIN local_accounts a ON a.id = t.account_id
+    LEFT JOIN local_accounts da ON da.id = t.destination_account_id
+    LEFT JOIN local_categories c ON c.id = t.category_id
+    LEFT JOIN local_pockets p ON p.id = t.pocket_id
+    LEFT JOIN (
+      SELECT DISTINCT matched_transaction_id 
+      FROM local_bank_mutations 
+      WHERE reconciliation_status IN ('matched', 'created_as_new') AND matched_transaction_id IS NOT NULL
+    ) bm ON bm.matched_transaction_id = t.id
+    WHERE t.id = ? AND t.deleted_at IS NULL
+    LIMIT 1;
+  `;
+  const r = await db.getFirstAsync<any>(query, [id]);
+  if (!r) return null;
+  return {
+    id: r.id,
+    userId: r.user_id,
+    accountId: r.account_id,
+    destinationAccountId: r.destination_account_id,
+    categoryId: r.category_id,
+    pocketId: r.pocket_id || null,
+    type: r.type,
+    amount: r.amount,
+    transferFee: r.transfer_fee || 0,
+    currency: r.currency,
+    note: r.note,
+    transactionDate: r.transaction_date,
+    clientId: r.client_id,
+    version: r.version,
+    syncStatus: r.sync_status,
+    receiptUrl: r.receipt_url || null,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    deletedAt: r.deleted_at,
+    account: r.account_name ? { id: r.account_id, name: r.account_name, type: r.account_type } : undefined,
+    destinationAccount: r.dest_account_name ? { id: r.destination_account_id, name: r.dest_account_name, type: r.dest_account_type } : null,
+    category: r.type === 'transfer' ? { id: 'transfer', name: 'Transfer Antar Akun', icon: 'repeat' } : (r.category_name ? { id: r.category_id, name: r.category_name, icon: r.category_icon } : null),
+    pocket: r.pocket_name ? { id: r.pocket_id, name: r.pocket_name, emoji: r.pocket_emoji, type: r.pocket_type } : null,
+    isBankVerified: Boolean(r.is_bank_verified),
+  };
+}
+
 export async function insertLocalTransaction(tx: {
   accountId: string;
   destinationAccountId?: string | null;
@@ -471,8 +617,11 @@ export async function insertLocalTransaction(tx: {
     );
   });
 
-  const list = await getLocalTransactions();
-  return list.find((t) => t.id === id)!;
+  const created = await getLocalTransactionById(id);
+  if (!created) {
+    throw new Error('Gagal memuat transaksi baru.');
+  }
+  return created;
 }
 
 export async function deleteLocalTransaction(id: string): Promise<void> {
@@ -517,8 +666,7 @@ export async function updateLocalTransaction(
 ): Promise<void> {
   const db = await getDb();
   const now = new Date().toISOString();
-  const list = await getLocalTransactions();
-  const existing = list.find((t) => t.id === id);
+  const existing = await getLocalTransactionById(id);
   if (!existing) return;
 
   const newVersion = (existing.version || 1) + 1;
@@ -539,6 +687,15 @@ export async function updateLocalTransaction(
       [newAmount, newNote ?? null, newCategoryId ?? null, newAccountId, newDestAccountId ?? null, newFee, newReceipt ?? null, newDate, newVersion, now, id]
     );
 
+    // Adjust pocket balance if transaction is tied to a pocket
+    if (existing.pocketId && existing.type === 'expense' && updates.amount !== undefined && updates.amount !== existing.amount) {
+      const amountDiff = newAmount - existing.amount;
+      await db.runAsync(
+        `UPDATE local_pockets SET allocated_balance = MAX(0, allocated_balance - ?), updated_at = ? WHERE id = ?;`,
+        [amountDiff, now, existing.pocketId]
+      );
+    }
+
     const payload = JSON.stringify({
       amount: newAmount,
       note: newNote,
@@ -556,7 +713,58 @@ export async function updateLocalTransaction(
        VALUES (?, ?, 'transaction', 'update', ?, ?, 0, 'pending', ?, ?);`,
       [crypto.randomUUID(), existing.clientId, id, payload, now, now]
     );
+
+    // PRD Section 69: Audit Log / Riwayat Perubahan Transaksi
+    const changeItems: string[] = [];
+    if (updates.amount !== undefined && updates.amount !== existing.amount) {
+      changeItems.push(`Nominal: Rp ${existing.amount.toLocaleString('id-ID')} → Rp ${updates.amount.toLocaleString('id-ID')}`);
+    }
+    if (updates.note !== undefined && updates.note !== existing.note) {
+      changeItems.push(`Catatan: "${existing.note || '-'}" → "${updates.note || '-'}"`);
+    }
+    if (updates.categoryId !== undefined && updates.categoryId !== existing.categoryId) {
+      changeItems.push('Kategori diperbarui');
+    }
+    if (updates.accountId !== undefined && updates.accountId !== existing.accountId) {
+      changeItems.push('Akun sumber dipindahkan');
+    }
+    if (updates.receiptUrl !== undefined && updates.receiptUrl !== existing.receiptUrl) {
+      changeItems.push(updates.receiptUrl ? 'Foto bukti dilampirkan' : 'Foto bukti dihapus');
+    }
+
+    if (changeItems.length > 0) {
+      const summaryText = changeItems.join('; ');
+      await db.runAsync(
+        `INSERT INTO local_transaction_history (id, transaction_id, changed_by, snapshot_before, snapshot_after, summary, changed_at)
+         VALUES (?, ?, 'user', ?, ?, ?, ?);`,
+        [
+          crypto.randomUUID(),
+          id,
+          JSON.stringify(existing),
+          JSON.stringify({ ...existing, ...updates, version: newVersion }),
+          summaryText,
+          now,
+        ]
+      );
+    }
   });
+}
+
+export async function getLocalTransactionHistory(transactionId: string): Promise<TransactionHistoryModel[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT * FROM local_transaction_history WHERE transaction_id = ? ORDER BY changed_at DESC;`,
+    [transactionId]
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    transactionId: r.transaction_id,
+    changedBy: r.changed_by,
+    snapshotBefore: JSON.parse(r.snapshot_before || '{}'),
+    snapshotAfter: JSON.parse(r.snapshot_after || '{}'),
+    summary: r.summary,
+    changedAt: r.changed_at,
+  }));
 }
 
 // PRD Section 68: Duplicate Transaction Detector
@@ -621,6 +829,17 @@ export async function bulkDeleteLocalTransactions(ids: string[]): Promise<void> 
 
   await db.withTransactionAsync(async () => {
     for (const id of ids) {
+      const row = await db.getFirstAsync<{ pocket_id: string | null; type: string; amount: number }>(
+        `SELECT pocket_id, type, amount FROM local_transactions WHERE id = ?;`,
+        [id]
+      );
+      if (row?.pocket_id && row.type === 'expense') {
+        await db.runAsync(
+          `UPDATE local_pockets SET allocated_balance = allocated_balance + ?, updated_at = ? WHERE id = ?;`,
+          [row.amount, now, row.pocket_id]
+        );
+      }
+
       await db.runAsync(`UPDATE local_transactions SET deleted_at = ?, sync_status = 'pending_sync', updated_at = ? WHERE id = ?;`, [now, now, id]);
 
       await db.runAsync(
@@ -717,6 +936,9 @@ export async function insertLocalAccount(acc: {
   type: string;
   initialBalance?: number;
   reservedAmount?: number;
+  color?: string;
+  isHidden?: boolean;
+  sortOrder?: number;
   currency?: string;
 }): Promise<AccountModel> {
   const db = await getDb();
@@ -724,12 +946,15 @@ export async function insertLocalAccount(acc: {
   const now = new Date().toISOString();
   const initial = acc.initialBalance || 0;
   const reserved = acc.reservedAmount || 0;
+  const color = acc.color || '#D4AF37';
+  const isHidden = acc.isHidden ? 1 : 0;
+  const sortOrder = acc.sortOrder || 0;
   const currency = acc.currency || 'IDR';
 
   await db.runAsync(
-    `INSERT INTO local_accounts (id, user_id, name, type, currency, initial_balance, reserved_amount, is_default, is_archived, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?);`,
-    [id, currentActiveUserId, acc.name, acc.type, currency, initial, reserved, now, now]
+    `INSERT INTO local_accounts (id, user_id, name, type, currency, initial_balance, reserved_amount, color, is_hidden, sort_order, is_default, is_archived, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?);`,
+    [id, currentActiveUserId, acc.name, acc.type, currency, initial, reserved, color, isHidden, sortOrder, now, now]
   );
 
   const accounts = await getLocalAccounts();
@@ -739,10 +964,25 @@ export async function insertLocalAccount(acc: {
 export async function archiveLocalAccount(id: string): Promise<void> {
   const db = await getDb();
   const now = new Date().toISOString();
-  await db.runAsync(
-    `UPDATE local_accounts SET is_archived = 1, updated_at = ? WHERE id = ?;`,
-    [now, id]
-  );
+  await db.withTransactionAsync(async () => {
+    const target = await db.getFirstAsync<{ is_default: number }>(
+      `SELECT is_default FROM local_accounts WHERE id = ?;`,
+      [id]
+    );
+
+    await db.runAsync(
+      `UPDATE local_accounts SET is_archived = 1, is_default = 0, updated_at = ? WHERE id = ?;`,
+      [now, id]
+    );
+
+    if (target?.is_default) {
+      await db.runAsync(
+        `UPDATE local_accounts SET is_default = 1, updated_at = ?
+         WHERE id = (SELECT id FROM local_accounts WHERE is_archived = 0 ORDER BY sort_order ASC, created_at ASC LIMIT 1);`,
+        [now]
+      );
+    }
+  });
 }
 
 export async function getLocalAccounts(): Promise<AccountModel[]> {
@@ -756,10 +996,11 @@ export async function getLocalAccounts(): Promise<AccountModel[]> {
         - COALESCE((SELECT SUM(amount) FROM local_transactions WHERE account_id = a.id AND type = 'expense' AND deleted_at IS NULL), 0)
         + COALESCE((SELECT SUM(amount) FROM local_transactions WHERE destination_account_id = a.id AND type = 'transfer' AND deleted_at IS NULL), 0)
         - COALESCE((SELECT SUM(amount + transfer_fee) FROM local_transactions WHERE account_id = a.id AND type = 'transfer' AND deleted_at IS NULL), 0)
-      ) as current_balance
+      ) as current_balance,
+      COALESCE((SELECT SUM(allocated_balance) FROM local_pockets WHERE account_id = a.id), 0) as allocated_amount
     FROM local_accounts a
     WHERE a.is_archived = 0
-    ORDER BY a.is_default DESC, a.created_at ASC;
+    ORDER BY a.sort_order ASC, a.is_default DESC, a.created_at ASC;
   `;
 
   const rows = await db.getAllAsync<any>(query);
@@ -771,7 +1012,11 @@ export async function getLocalAccounts(): Promise<AccountModel[]> {
     currency: r.currency,
     initialBalance: r.initial_balance,
     currentBalance: r.current_balance,
-    reservedAmount: r.reserved_amount || 0,
+    reservedAmount: (r.allocated_amount || 0) + (r.reserved_amount || 0),
+    allocatedAmount: r.allocated_amount || 0,
+    color: r.color || '#D4AF37',
+    isHidden: Boolean(r.is_hidden),
+    sortOrder: r.sort_order || 0,
     isDefault: Boolean(r.is_default),
     isArchived: Boolean(r.is_archived),
     createdAt: r.created_at,
@@ -849,7 +1094,7 @@ export async function getLocalDashboardSummary(month: string) {
   const accounts = await getLocalAccounts();
   const totalNetWorth = accounts.reduce((sum, a) => sum + (a.currentBalance || 0), 0);
   const totalReserved = accounts.reduce((sum, a) => sum + (a.reservedAmount || 0), 0);
-  const availableNetWorth = totalNetWorth - totalReserved;
+  const availableNetWorth = Math.max(0, totalNetWorth - totalReserved);
 
   const totalIncome = summaryRow?.total_income || 0;
   const totalExpense = summaryRow?.total_expense || 0;
@@ -929,7 +1174,7 @@ export async function insertLocalGoal(goal: {
   await db.runAsync(
     `INSERT INTO local_goals (id, user_id, name, emoji, target_amount, current_amount, target_date, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
-    [id, currentActiveUserId, goal.name, goal.emoji || '🎯', goal.targetAmount, currentAmount, goal.targetDate || null, status, now, now]
+    [id, currentActiveUserId, goal.name, goal.emoji || 'target', goal.targetAmount, currentAmount, goal.targetDate || null, status, now, now]
   );
 
   const goals = await getLocalGoals();
@@ -992,7 +1237,15 @@ export async function deleteLocalGoal(goalId: string): Promise<void> {
 
 export async function updateLocalAccount(
   id: string,
-  data: { name?: string; type?: 'bank' | 'cash' | 'e_wallet'; initialBalance?: number; reservedAmount?: number }
+  data: {
+    name?: string;
+    type?: 'bank' | 'cash' | 'e_wallet';
+    initialBalance?: number;
+    reservedAmount?: number;
+    color?: string;
+    isHidden?: boolean;
+    sortOrder?: number;
+  }
 ): Promise<void> {
   const db = await getDb();
   const updates: string[] = [];
@@ -1014,6 +1267,18 @@ export async function updateLocalAccount(
     updates.push('reserved_amount = ?');
     params.push(data.reservedAmount);
   }
+  if (data.color !== undefined) {
+    updates.push('color = ?');
+    params.push(data.color);
+  }
+  if (data.isHidden !== undefined) {
+    updates.push('is_hidden = ?');
+    params.push(data.isHidden ? 1 : 0);
+  }
+  if (data.sortOrder !== undefined) {
+    updates.push('sort_order = ?');
+    params.push(data.sortOrder);
+  }
 
   if (updates.length === 0) return;
 
@@ -1022,6 +1287,15 @@ export async function updateLocalAccount(
   params.push(id);
 
   await db.runAsync(`UPDATE local_accounts SET ${updates.join(', ')} WHERE id = ?;`, params);
+}
+
+export async function setDefaultLocalAccount(id: string): Promise<void> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('UPDATE local_accounts SET is_default = 0, updated_at = ?;', [now]);
+    await db.runAsync('UPDATE local_accounts SET is_default = 1, updated_at = ? WHERE id = ?;', [now, id]);
+  });
 }
 
 export async function updateLocalCategory(
@@ -1241,13 +1515,31 @@ export async function executeRecurringRule(id: string): Promise<TransactionModel
     transactionDate: new Date().toISOString(),
   });
 
-  // Advance next due date forward
+  // Advance next due date forward safely avoiding end-of-month rollovers
   const currentDue = new Date(rule.next_due_date || new Date());
-  if (rule.frequency === 'daily') currentDue.setDate(currentDue.getDate() + 1);
-  else if (rule.frequency === 'weekly') currentDue.setDate(currentDue.getDate() + 7);
-  else if (rule.frequency === 'biweekly') currentDue.setDate(currentDue.getDate() + 14);
-  else if (rule.frequency === 'monthly') currentDue.setMonth(currentDue.getMonth() + 1);
-  else if (rule.frequency === 'yearly') currentDue.setFullYear(currentDue.getFullYear() + 1);
+  if (rule.frequency === 'daily') {
+    currentDue.setDate(currentDue.getDate() + 1);
+  } else if (rule.frequency === 'weekly') {
+    currentDue.setDate(currentDue.getDate() + 7);
+  } else if (rule.frequency === 'biweekly') {
+    currentDue.setDate(currentDue.getDate() + 14);
+  } else if (rule.frequency === 'monthly') {
+    const origDay = currentDue.getDate();
+    const targetMonth = currentDue.getMonth() + 1;
+    currentDue.setDate(1);
+    currentDue.setMonth(targetMonth);
+    const maxDays = new Date(currentDue.getFullYear(), currentDue.getMonth() + 1, 0).getDate();
+    currentDue.setDate(Math.min(origDay, maxDays));
+  } else if (rule.frequency === 'yearly') {
+    const origDay = currentDue.getDate();
+    const origMonth = currentDue.getMonth();
+    const targetYear = currentDue.getFullYear() + 1;
+    currentDue.setDate(1);
+    currentDue.setFullYear(targetYear);
+    currentDue.setMonth(origMonth);
+    const maxDays = new Date(targetYear, origMonth + 1, 0).getDate();
+    currentDue.setDate(Math.min(origDay, maxDays));
+  }
 
   const nextDueStr = currentDue.toISOString().slice(0, 10);
   const now = new Date().toISOString();
@@ -1320,13 +1612,25 @@ export async function deleteLocalTemplate(id: string): Promise<void> {
 }
 
 // ==========================================
-// POCKETS (KANTONG KEUANGAN) - PRD Section 79
+// POCKETS (KANTONG KEUANGAN) - PRD Section 79 & SHARED POCKETS
 // ==========================================
+
+function generateLocalInviteCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = 'PKT-';
+  for (let i = 0; i < 5; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
 
 export async function getLocalPockets(accountId?: string): Promise<PocketModel[]> {
   const db = await getDb();
   let query = `
-    SELECT p.*, a.name as account_name
+    SELECT 
+      p.*, 
+      a.name as account_name,
+      (SELECT COUNT(*) FROM local_pocket_members WHERE pocket_id = p.id) as members_count
     FROM local_pockets p
     LEFT JOIN local_accounts a ON a.id = p.account_id
   `;
@@ -1349,6 +1653,9 @@ export async function getLocalPockets(accountId?: string): Promise<PocketModel[]
     targetAmount: r.target_amount,
     isLocked: Boolean(r.is_locked),
     sortOrder: r.sort_order,
+    isShared: Boolean(r.is_shared),
+    inviteCode: r.invite_code || null,
+    membersCount: Number(r.members_count || 0),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
     accountName: r.account_name,
@@ -1362,18 +1669,54 @@ export async function insertLocalPocket(data: {
   type: PocketType;
   initialAllocation?: number;
   targetAmount?: number;
+  isShared?: boolean;
+  inviteCode?: string;
 }): Promise<PocketModel> {
   const db = await getDb();
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const alloc = data.initialAllocation || 0;
   const isLocked = data.type === 'locked' ? 1 : 0;
+  const isShared = data.isShared || data.type === 'shared';
+  const inviteCode = isShared ? (data.inviteCode || generateLocalInviteCode()) : null;
 
   await db.runAsync(
-    `INSERT INTO local_pockets (id, user_id, account_id, name, emoji, type, allocated_balance, target_amount, is_locked, sort_order, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?);`,
-    [id, currentActiveUserId, data.accountId, data.name.trim(), data.emoji || '💰', data.type, alloc, data.targetAmount || null, isLocked, now, now]
+    `INSERT INTO local_pockets (id, user_id, account_id, name, emoji, type, allocated_balance, target_amount, is_locked, sort_order, is_shared, invite_code, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?);`,
+    [
+      id,
+      currentActiveUserId,
+      data.accountId,
+      data.name.trim(),
+      data.emoji || (isShared ? 'users' : 'wallet'),
+      data.type,
+      alloc,
+      data.targetAmount || null,
+      isLocked,
+      isShared ? 1 : 0,
+      inviteCode,
+      now,
+      now,
+    ]
   );
+
+  // If shared pocket, create owner member automatically
+  if (isShared) {
+    const memberId = crypto.randomUUID();
+    await db.runAsync(
+      `INSERT INTO local_pocket_members (id, pocket_id, user_id, name, avatar_emoji, role, total_contributed, joined_at)
+       VALUES (?, ?, ?, 'Saya (Pembuat)', 'crown', 'owner', ?, ?);`,
+      [memberId, id, currentActiveUserId, alloc, now]
+    );
+
+    if (alloc > 0) {
+      await db.runAsync(
+        `INSERT INTO local_pocket_contributions (id, pocket_id, member_id, member_name, member_avatar, amount, note, created_at)
+         VALUES (?, ?, ?, 'Saya (Pembuat)', 'crown', ?, 'Alokasi awal modal kas', ?);`,
+        [crypto.randomUUID(), id, memberId, alloc, now]
+      );
+    }
+  }
 
   const list = await getLocalPockets(data.accountId);
   return list.find((p) => p.id === id)!;
@@ -1381,7 +1724,7 @@ export async function insertLocalPocket(data: {
 
 export async function updateLocalPocket(
   id: string,
-  updates: Partial<Pick<PocketModel, 'name' | 'emoji' | 'type' | 'targetAmount' | 'isLocked' | 'sortOrder'>>
+  updates: Partial<Pick<PocketModel, 'name' | 'emoji' | 'type' | 'targetAmount' | 'isLocked' | 'sortOrder' | 'isShared' | 'inviteCode'>>
 ): Promise<void> {
   const db = await getDb();
   const now = new Date().toISOString();
@@ -1415,6 +1758,15 @@ export async function updateLocalPocket(
     clauses.push('sort_order = ?');
     params.push(updates.sortOrder);
   }
+  if (updates.isShared !== undefined) {
+    clauses.push('is_shared = ?');
+    params.push(updates.isShared ? 1 : 0);
+    if (updates.isShared) {
+      const code = updates.inviteCode || generateLocalInviteCode();
+      clauses.push('invite_code = COALESCE(invite_code, ?)');
+      params.push(code);
+    }
+  }
 
   params.push(id);
   await db.runAsync(`UPDATE local_pockets SET ${clauses.join(', ')} WHERE id = ?;`, params);
@@ -1422,7 +1774,202 @@ export async function updateLocalPocket(
 
 export async function deleteLocalPocket(id: string): Promise<void> {
   const db = await getDb();
-  await db.runAsync(`DELETE FROM local_pockets WHERE id = ?;`, [id]);
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(`DELETE FROM local_pocket_contributions WHERE pocket_id = ?;`, [id]);
+    await db.runAsync(`DELETE FROM local_pocket_members WHERE pocket_id = ?;`, [id]);
+    await db.runAsync(`DELETE FROM local_pockets WHERE id = ?;`, [id]);
+  });
+}
+
+export async function getLocalPocketMembers(pocketId: string): Promise<PocketMemberModel[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT * FROM local_pocket_members WHERE pocket_id = ? ORDER BY (CASE WHEN role = 'owner' THEN 0 ELSE 1 END), total_contributed DESC, joined_at ASC;`,
+    [pocketId]
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    pocketId: r.pocket_id,
+    userId: r.user_id,
+    name: r.name,
+    avatarEmoji: r.avatar_emoji || 'user',
+    role: r.role,
+    totalContributed: r.total_contributed || 0,
+    joinedAt: r.joined_at,
+  }));
+}
+
+export async function getLocalPocketContributions(pocketId: string): Promise<PocketContributionModel[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT * FROM local_pocket_contributions WHERE pocket_id = ? ORDER BY created_at DESC LIMIT 50;`,
+    [pocketId]
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    pocketId: r.pocket_id,
+    memberId: r.member_id,
+    memberName: r.member_name,
+    memberAvatar: r.member_avatar || 'user',
+    amount: r.amount,
+    note: r.note,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function addLocalPocketMember(
+  pocketId: string,
+  member: { name: string; avatarEmoji?: string; role?: PocketMemberRole }
+): Promise<PocketMemberModel> {
+  const db = await getDb();
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await db.runAsync(
+    `INSERT INTO local_pocket_members (id, pocket_id, user_id, name, avatar_emoji, role, total_contributed, joined_at)
+     VALUES (?, ?, NULL, ?, ?, ?, 0, ?);`,
+    [id, pocketId, member.name.trim(), member.avatarEmoji || 'user', member.role || 'contributor', now]
+  );
+  return {
+    id,
+    pocketId,
+    name: member.name.trim(),
+    avatarEmoji: member.avatarEmoji || 'user',
+    role: member.role || 'contributor',
+    totalContributed: 0,
+    joinedAt: now,
+  };
+}
+
+export async function deleteLocalPocketMember(pocketId: string, memberId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM local_pocket_members WHERE pocket_id = ? AND id = ? AND role != 'owner';`, [pocketId, memberId]);
+}
+
+export async function addLocalPocketContribution(data: {
+  pocketId: string;
+  memberId?: string;
+  memberName: string;
+  memberAvatar?: string;
+  amount: number;
+  note?: string;
+}): Promise<void> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  const contribId = crypto.randomUUID();
+
+  await db.withTransactionAsync(async () => {
+    // 1. Find or create member
+    let memId: string = data.memberId || '';
+    if (!memId) {
+      const existing = await db.getFirstAsync<any>(
+        `SELECT id FROM local_pocket_members WHERE pocket_id = ? AND LOWER(name) = LOWER(?);`,
+        [data.pocketId, data.memberName.trim()]
+      );
+      if (existing) {
+        memId = existing.id;
+      } else {
+        memId = crypto.randomUUID();
+        await db.runAsync(
+          `INSERT INTO local_pocket_members (id, pocket_id, user_id, name, avatar_emoji, role, total_contributed, joined_at)
+           VALUES (?, ?, NULL, ?, ?, 'contributor', 0, ?);`,
+          [memId, data.pocketId, data.memberName.trim(), data.memberAvatar || 'user', now]
+        );
+      }
+    }
+
+    // 2. Update member total_contributed
+    await db.runAsync(
+      `UPDATE local_pocket_members SET total_contributed = total_contributed + ? WHERE id = ?;`,
+      [data.amount, memId]
+    );
+
+    // 3. Insert into contributions feed
+    await db.runAsync(
+      `INSERT INTO local_pocket_contributions (id, pocket_id, member_id, member_name, member_avatar, amount, note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+      [contribId, data.pocketId, memId, data.memberName.trim(), data.memberAvatar || 'user', data.amount, data.note || null, now]
+    );
+
+    // 4. Increase pocket allocated balance
+    await db.runAsync(
+      `UPDATE local_pockets SET allocated_balance = allocated_balance + ?, updated_at = ? WHERE id = ?;`,
+      [data.amount, now, data.pocketId]
+    );
+  });
+}
+
+export async function toggleLocalPocketShared(id: string, isShared: boolean): Promise<string | null> {
+  const db = await getDb();
+  const now = new Date().toISOString();
+  let code: string | null = null;
+  if (isShared) {
+    const existing = await db.getFirstAsync<any>(`SELECT invite_code FROM local_pockets WHERE id = ?;`, [id]);
+    code = existing?.invite_code || generateLocalInviteCode();
+    await db.runAsync(
+      `UPDATE local_pockets SET is_shared = 1, invite_code = ?, updated_at = ? WHERE id = ?;`,
+      [code, now, id]
+    );
+
+    // Ensure owner member exists
+    const hasOwner = await db.getFirstAsync<any>(`SELECT id FROM local_pocket_members WHERE pocket_id = ? AND role = 'owner';`, [id]);
+    if (!hasOwner) {
+      await db.runAsync(
+        `INSERT INTO local_pocket_members (id, pocket_id, user_id, name, avatar_emoji, role, total_contributed, joined_at)
+         VALUES (?, ?, ?, 'Saya (Pembuat)', 'crown', 'owner', (SELECT allocated_balance FROM local_pockets WHERE id = ?), ?);`,
+        [crypto.randomUUID(), id, currentActiveUserId, id, now]
+      );
+    }
+  } else {
+    await db.runAsync(`UPDATE local_pockets SET is_shared = 0, updated_at = ? WHERE id = ?;`, [now, id]);
+  }
+  return code;
+}
+
+export async function joinLocalSharedPocket(
+  inviteCode: string,
+  memberName: string,
+  avatarEmoji?: string
+): Promise<{ success: boolean; pocket?: PocketModel; message: string }> {
+  const db = await getDb();
+  const trimmedCode = inviteCode.trim().toUpperCase();
+  const pocket = await db.getFirstAsync<any>(
+    `SELECT * FROM local_pockets WHERE is_shared = 1 AND UPPER(invite_code) = ?;`,
+    [trimmedCode]
+  );
+
+  if (!pocket) {
+    return {
+      success: false,
+      message: 'Kode undangan tidak ditemukan atau kantong bersama tidak aktif.',
+    };
+  }
+
+  const now = new Date().toISOString();
+  const memberId = crypto.randomUUID();
+
+  // Check if member already exists
+  const existingMember = await db.getFirstAsync<any>(
+    `SELECT id FROM local_pocket_members WHERE pocket_id = ? AND LOWER(name) = LOWER(?);`,
+    [pocket.id, memberName.trim()]
+  );
+
+  if (existingMember) {
+    return {
+      success: true,
+      message: `Anda sudah terdaftar sebagai anggota di "${pocket.name}".`,
+    };
+  }
+
+  await db.runAsync(
+    `INSERT INTO local_pocket_members (id, pocket_id, user_id, name, avatar_emoji, role, total_contributed, joined_at)
+     VALUES (?, ?, NULL, ?, ?, 'contributor', 0, ?);`,
+    [memberId, pocket.id, memberName.trim(), avatarEmoji || 'user', now]
+  );
+
+  return {
+    success: true,
+    message: `Selamat! Anda berhasil bergabung ke Kantong Bersama "${pocket.name}".`,
+  };
 }
 
 export async function transferLocalPocketFunds(
@@ -1625,5 +2172,217 @@ export async function deleteLocalBankConnection(id: string): Promise<void> {
     await db.runAsync(`DELETE FROM local_bank_mutations WHERE connection_id = ?;`, [id]);
     await db.runAsync(`DELETE FROM local_bank_connections WHERE id = ?;`, [id]);
   });
+}
+
+// PRD Section 70: Backup & Restore via Encrypted / Structured JSON (.ukbak)
+export async function exportFullLocalBackup(): Promise<string> {
+  const db = await getDb();
+  const [transactions, accounts, categories, budgets, goals, recurring, pockets] = await Promise.all([
+    db.getAllAsync(`SELECT * FROM local_transactions WHERE deleted_at IS NULL;`),
+    db.getAllAsync(`SELECT * FROM local_accounts WHERE is_archived = 0;`),
+    db.getAllAsync(`SELECT * FROM local_categories WHERE is_archived = 0;`),
+    db.getAllAsync(`SELECT * FROM local_budgets;`),
+    db.getAllAsync(`SELECT * FROM local_goals;`),
+    db.getAllAsync(`SELECT * FROM local_recurring_rules;`),
+    db.getAllAsync(`SELECT * FROM local_pockets;`),
+  ]);
+
+  const backupData = {
+    app: 'UangKu',
+    format: 'ukbak_v1',
+    exportedAt: new Date().toISOString(),
+    itemCounts: {
+      transactions: transactions.length,
+      accounts: accounts.length,
+      categories: categories.length,
+      goals: goals.length,
+    },
+    data: {
+      transactions,
+      accounts,
+      categories,
+      budgets,
+      goals,
+      recurring,
+      pockets,
+    },
+  };
+
+  return JSON.stringify(backupData, null, 2);
+}
+
+export async function restoreFullLocalBackup(backupJsonString: string): Promise<{ success: boolean; message: string; restoredCount: number }> {
+  try {
+    const backup = JSON.parse(backupJsonString);
+    if (!backup || backup.app !== 'UangKu' || !backup.data) {
+      return { success: false, message: 'Format file cadangan tidak valid (bukan file UangKu .ukbak).', restoredCount: 0 };
+    }
+
+    const db = await getDb();
+    const now = new Date().toISOString();
+    let txCount = 0;
+
+    await db.withTransactionAsync(async () => {
+      // Clear current transaction-based records
+      await db.execAsync(`
+        DELETE FROM local_transactions;
+        DELETE FROM mutation_outbox;
+        DELETE FROM local_budgets;
+        DELETE FROM local_goals;
+        DELETE FROM local_recurring_rules;
+        DELETE FROM local_pockets;
+      `);
+
+      // Restore accounts
+      if (Array.isArray(backup.data.accounts)) {
+        for (const a of backup.data.accounts) {
+          await db.runAsync(
+            `INSERT OR REPLACE INTO local_accounts (id, user_id, name, type, currency, initial_balance, reserved_amount, color, is_hidden, sort_order, is_default, is_archived, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+            [
+              a.id,
+              a.user_id || currentActiveUserId,
+              a.name,
+              a.type || 'bank',
+              a.currency || 'IDR',
+              a.initial_balance || 0,
+              a.reserved_amount || 0,
+              a.color || '#D4AF37',
+              a.is_hidden || 0,
+              a.sort_order || 0,
+              a.is_default || 0,
+              a.is_archived || 0,
+              a.created_at || now,
+              now,
+            ]
+          );
+        }
+      }
+
+      // Restore categories
+      if (Array.isArray(backup.data.categories)) {
+        for (const c of backup.data.categories) {
+          await db.runAsync(
+            `INSERT OR REPLACE INTO local_categories (id, user_id, name, type, icon, is_system, is_archived, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+            [
+              c.id,
+              c.user_id || null,
+              c.name,
+              c.type,
+              c.icon || 'more-horizontal',
+              c.is_system || 0,
+              c.is_archived || 0,
+              c.created_at || now,
+              now,
+            ]
+          );
+        }
+      }
+
+      // Restore transactions
+      if (Array.isArray(backup.data.transactions)) {
+        txCount = backup.data.transactions.length;
+        for (const t of backup.data.transactions) {
+          await db.runAsync(
+            `INSERT OR REPLACE INTO local_transactions (id, user_id, account_id, destination_account_id, category_id, pocket_id, type, amount, transfer_fee, currency, note, receipt_url, transaction_date, client_id, version, sync_status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'synced', ?, ?);`,
+            [
+              t.id,
+              t.user_id || currentActiveUserId,
+              t.account_id,
+              t.destination_account_id || null,
+              t.category_id || null,
+              t.pocket_id || null,
+              t.type,
+              t.amount,
+              t.transfer_fee || 0,
+              t.currency || 'IDR',
+              t.note || null,
+              t.receipt_url || null,
+              t.transaction_date,
+              t.client_id || crypto.randomUUID(),
+              t.version || 1,
+              t.created_at || now,
+              now,
+            ]
+          );
+        }
+      }
+
+      // Restore goals
+      if (Array.isArray(backup.data.goals)) {
+        for (const g of backup.data.goals) {
+          await db.runAsync(
+            `INSERT OR REPLACE INTO local_goals (id, user_id, name, emoji, target_amount, current_amount, target_date, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+            [
+              g.id,
+              g.user_id || currentActiveUserId,
+              g.name,
+              g.emoji || 'target',
+              g.target_amount,
+              g.current_amount || 0,
+              g.target_date || null,
+              g.status || 'active',
+              g.created_at || now,
+              now,
+            ]
+          );
+        }
+      }
+
+      // Restore budgets
+      if (Array.isArray(backup.data.budgets)) {
+        for (const b of backup.data.budgets) {
+          await db.runAsync(
+            `INSERT OR REPLACE INTO local_budgets (id, user_id, category_id, amount, currency, period, is_active, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+            [
+              b.id,
+              b.user_id || currentActiveUserId,
+              b.category_id,
+              b.amount,
+              b.currency || 'IDR',
+              b.period || 'monthly',
+              b.is_active !== undefined ? b.is_active : 1,
+              b.created_at || now,
+              now,
+            ]
+          );
+        }
+      }
+
+      // Restore pockets
+      if (Array.isArray(backup.data.pockets)) {
+        for (const p of backup.data.pockets) {
+          await db.runAsync(
+            `INSERT OR REPLACE INTO local_pockets (id, user_id, account_id, name, emoji, type, allocated_balance, target_amount, is_locked, sort_order, is_shared, invite_code, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+            [
+              p.id,
+              p.user_id || currentActiveUserId,
+              p.account_id,
+              p.name,
+              p.emoji || 'wallet',
+              p.type,
+              p.allocated_balance || 0,
+              p.target_amount || null,
+              p.is_locked || 0,
+              p.sort_order || 0,
+              p.is_shared || 0,
+              p.invite_code || null,
+              p.created_at || now,
+              now,
+            ]
+          );
+        }
+      }
+    });
+
+    return { success: true, message: `Berhasil memulihkan ${txCount} transaksi dan pengaturan data.`, restoredCount: txCount };
+  } catch (err: any) {
+    return { success: false, message: `Gagal membaca file cadangan: ${err.message}`, restoredCount: 0 };
+  }
 }
 

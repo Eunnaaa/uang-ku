@@ -54,7 +54,7 @@ export function BalanceHeroCard({
       <View style={styles.headerRow}>
         <View style={styles.badge}>
           <ShieldCheck size={12} color={colors.gold.champagne} />
-          <Text style={styles.badgeText}>SALDO KEKAYAAN BERSIH</Text>
+          <Text style={styles.badgeText}>TOTAL ASSETS</Text>
         </View>
         <View style={styles.periodPill}>
           <Text style={styles.periodText}>{currentPeriod}</Text>

@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, Platform } from
 import { ShieldAlert, RefreshCw } from 'lucide-react-native';
 import { colors } from '../theme/colors';
 import { hapticMedium } from '../theme/haptics';
+import { telemetryService } from '../services/telemetryService';
 
 interface Props {
   children: ReactNode;
@@ -25,6 +26,11 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     console.error('Unhandled React Error in UangKu Mobile:', error, errorInfo);
+    telemetryService.recordCrash(error, {
+      screen: 'ErrorBoundaryRoot',
+      action: 'react_lifecycle_render_error',
+      extra: { componentStack: errorInfo.componentStack?.slice(0, 500) },
+    });
   }
 
   handleReload = () => {

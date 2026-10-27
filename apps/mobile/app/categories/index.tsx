@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -42,7 +42,8 @@ import {
   Music,
 } from 'lucide-react-native';
 import { type CategoryModel } from '@uangku/contracts';
-import { colors } from '../../src/theme/colors';
+import { colors, type ThemeColors } from '../../src/theme/colors';
+import { useTheme } from '../../src/theme/themeContext';
 import {
   getLocalCategories,
   insertLocalCategory,
@@ -74,6 +75,8 @@ const CATEGORY_ICON_PRESETS = [
 export default function CategoriesScreen() {
   const router = useRouter();
   const toast = useToast();
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
 
   const [refreshing, setRefreshing] = useState(false);
   const [categories, setCategories] = useState<CategoryModel[]>([]);
@@ -228,7 +231,7 @@ export default function CategoriesScreen() {
             setIsAddModalOpen(true);
           }}
         >
-          <Plus size={14} color="#090A0E" />
+          <Plus size={14} color={isDark ? '#090A0E' : '#FFFFFF'} />
           <Text style={styles.addBtnText}>Tambah</Text>
         </TouchableOpacity>
       </View>
@@ -516,7 +519,7 @@ export default function CategoriesScreen() {
                 activeOpacity={0.8}
                 onPress={handleSaveCategory}
               >
-                <Sparkles size={16} color="#090A0E" />
+                <Sparkles size={16} color={isDark ? '#090A0E' : '#FFFFFF'} />
                 <Text style={styles.saveSubmitText}>Simpan Kategori</Text>
               </TouchableOpacity>
             </View>
@@ -560,7 +563,7 @@ export default function CategoriesScreen() {
                 activeOpacity={0.8}
                 onPress={handleUpdateCategory}
               >
-                <Sparkles size={16} color="#090A0E" />
+                <Sparkles size={16} color={isDark ? '#090A0E' : '#FFFFFF'} />
                 <Text style={styles.saveSubmitText}>Perbarui Kategori</Text>
               </TouchableOpacity>
             </View>
@@ -571,7 +574,8 @@ export default function CategoriesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) =>
+  StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.bg.base,
@@ -623,7 +627,7 @@ const styles = StyleSheet.create({
   addBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
   },
   container: {
     flex: 1,
@@ -959,6 +963,6 @@ const styles = StyleSheet.create({
   saveSubmitText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
   },
 });

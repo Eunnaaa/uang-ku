@@ -10,24 +10,7 @@ import { demoTransactions } from '../transactions/transaction.route';
 import { db, schema } from '../../db/client';
 import { eq } from 'drizzle-orm';
 
-export const demoRecurringRules: RecurringRuleModel[] = [
-  {
-    id: 'r1000000-0000-0000-0000-000000000001',
-    userId: '00000000-0000-0000-0000-000000000001',
-    accountId: 'a1000000-0000-0000-0000-000000000001',
-    categoryId: 'c1000000-0000-0000-0000-000000000004', // Tagihan
-    type: 'expense',
-    amount: 54900,
-    frequency: 'monthly',
-    note: 'Langganan Spotify Premium',
-    nextDueDate: '2026-11-01',
-    isActive: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    accountName: 'Dompet Tunai',
-    categoryName: 'Tagihan & Langganan',
-  },
-];
+export const demoRecurringRules: RecurringRuleModel[] = [];
 
 export const recurringRoutes = new Elysia({ prefix: '/api/v1/recurring-rules' })
   .use(authMiddleware)

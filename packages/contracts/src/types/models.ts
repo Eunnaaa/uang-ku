@@ -3,7 +3,8 @@ export type AccountType = 'cash' | 'bank' | 'e_wallet' | 'other';
 export type SyncStatus = 'synced' | 'pending_sync' | 'failed';
 export type OutboxOperation = 'create' | 'update' | 'delete';
 export type EntityType = 'transaction' | 'account' | 'category' | 'pocket' | 'bank_connection' | 'bank_mutation';
-export type PocketType = 'spending' | 'saving' | 'locked' | 'bills';
+export type PocketType = 'spending' | 'saving' | 'locked' | 'bills' | 'shared';
+export type PocketMemberRole = 'owner' | 'contributor' | 'viewer';
 
 export interface ProfileModel {
   id: string;
@@ -23,10 +24,46 @@ export interface AccountModel {
   initialBalance: number;
   currentBalance?: number;
   reservedAmount?: number;
+  allocatedAmount?: number;
+  color?: string | null;
+  isHidden?: boolean;
+  sortOrder?: number;
   isDefault: boolean;
   isArchived: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TransactionHistoryModel {
+  id: string;
+  transactionId: string;
+  changedBy: 'user' | 'system';
+  snapshotBefore: Record<string, unknown>;
+  snapshotAfter: Record<string, unknown>;
+  summary: string;
+  changedAt: string;
+}
+
+export interface PocketMemberModel {
+  id: string;
+  pocketId: string;
+  userId?: string | null;
+  name: string;
+  avatarEmoji?: string;
+  role: PocketMemberRole;
+  totalContributed: number;
+  joinedAt: string;
+}
+
+export interface PocketContributionModel {
+  id: string;
+  pocketId: string;
+  memberId: string;
+  memberName: string;
+  memberAvatar?: string;
+  amount: number;
+  note?: string | null;
+  createdAt: string;
 }
 
 export interface PocketModel {
@@ -43,6 +80,11 @@ export interface PocketModel {
   createdAt: string;
   updatedAt: string;
   accountName?: string;
+  isShared?: boolean;
+  inviteCode?: string | null;
+  membersCount?: number;
+  members?: PocketMemberModel[];
+  contributions?: PocketContributionModel[];
 }
 
 export interface BankConnectionModel {

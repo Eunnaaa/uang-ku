@@ -11,7 +11,7 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -42,7 +42,10 @@ import {
   CheckCircle2,
   Sliders,
   Sparkles,
+  Check,
 } from 'lucide-react-native';
+import { AppIcon, GOAL_ICON_KEYS } from '../../src/components/AppIcon';
+import { CashFlowCircularChart } from '../../src/components/CashFlowCircularChart';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { formatRupiah, generateTransactionsCsv, type CategoryModel } from '@uangku/contracts';
@@ -100,7 +103,7 @@ export default function ReportsScreen() {
   const [isAddGoalModalOpen, setIsAddGoalModalOpen] = useState(false);
   const [newGoalName, setNewGoalName] = useState('');
   const [newGoalTarget, setNewGoalTarget] = useState('');
-  const [newGoalEmoji, setNewGoalEmoji] = useState('🎯');
+  const [newGoalEmoji, setNewGoalEmoji] = useState('target');
   const [newGoalDate, setNewGoalDate] = useState('');
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false);
   const [selectedGoalForDeposit, setSelectedGoalForDeposit] = useState<GoalModel | null>(null);
@@ -176,6 +179,12 @@ export default function ReportsScreen() {
   useEffect(() => {
     loadReportData();
   }, [loadReportData]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadReportData();
+    }, [loadReportData])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -285,7 +294,7 @@ export default function ReportsScreen() {
       hapticMedium();
       await insertLocalGoal({
         name: newGoalName.trim(),
-        emoji: newGoalEmoji || '🎯',
+        emoji: newGoalEmoji || 'target',
         targetAmount: numTarget,
         targetDate: newGoalDate.trim() || undefined,
       });
@@ -317,7 +326,7 @@ export default function ReportsScreen() {
       await loadReportData();
 
       if (isJustAchieved) {
-        Alert.alert('🎉 Selamat!', `Goal "${goal.name}" kamu telah berhasil tercapai 100%! Pertahankan kebiasaan menabung yang luar biasa.`);
+        Alert.alert('Selamat!', `Goal "${goal.name}" kamu telah berhasil tercapai 100%! Pertahankan kebiasaan menabung yang luar biasa.`);
       } else {
         toast.showSuccess('Tabungan Ditambahkan', `${formatRupiah(numDeposit)} dialokasikan ke ${goal.name}`);
       }
@@ -470,145 +479,13 @@ export default function ReportsScreen() {
           />
         }
       >
-        {/* 2. Executive Cash Flow Summary Hero Card */}
-        <View style={styles.summaryCard}>
-          <View style={styles.summaryTopRow}>
-            <View>
-              <Text style={styles.summarySectionLabel}>ARUS KAS BERSIH</Text>
-              <Text
-                style={[
-                  styles.netCashFlowValue,
-                  {
-                    color: isNetZero
-                      ? colors.text.secondary
-                      : isNetPositive
-                      ? colors.flow.income
-                      : colors.flow.expense,
-                  },
-                ]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.7}
-              >
-                {isNetPositive && !isNetZero ? '+' : ''}{formatRupiah(summary.netCashFlow)}
-              </Text>
-            </View>
-
-            <View
-              style={[
-                styles.netStatusBadge,
-                {
-                  backgroundColor: isNetZero
-                    ? 'rgba(255, 255, 255, 0.06)'
-                    : isNetPositive
-                    ? colors.flow.incomeBg
-                    : colors.flow.expenseBg,
-                  borderColor: isNetZero
-                    ? 'rgba(255, 255, 255, 0.12)'
-                    : isNetPositive
-                    ? colors.flow.incomeBorder
-                    : colors.flow.expenseBorder,
-                },
-              ]}
-            >
-              {isNetZero ? (
-                <Text style={styles.netStatusTextMuted}>Seimbang</Text>
-              ) : isNetPositive ? (
-                <>
-                  <TrendingUp size={12} color={colors.flow.income} />
-                  <Text style={[styles.netStatusText, { color: colors.flow.income }]}>Surplus</Text>
-                </>
-              ) : (
-                <>
-                  <TrendingDown size={12} color={colors.flow.expense} />
-                  <Text style={[styles.netStatusText, { color: colors.flow.expense }]}>Defisit</Text>
-                </>
-              )}
-            </View>
-          </View>
-
-          {/* Income & Expense Split Boxes */}
-          <View style={styles.flowSplitRow}>
-            <View style={styles.flowBox}>
-              <View style={styles.flowHeaderRow}>
-                <View style={[styles.flowIconCircle, { backgroundColor: colors.flow.incomeBg, borderColor: colors.flow.incomeBorder }]}>
-                  <ArrowDownLeft size={12} color={colors.flow.income} />
-                </View>
-                <Text style={styles.flowLabel}>Pemasukan</Text>
-              </View>
-              <Text
-                style={[styles.flowValue, { color: colors.flow.income }]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.8}
-              >
-                +{formatRupiah(summary.totalIncome)}
-              </Text>
-            </View>
-
-            <View style={styles.flowBoxDivider} />
-
-            <View style={[styles.flowBox, styles.flowBoxRight]}>
-              <View style={styles.flowHeaderRow}>
-                <View style={[styles.flowIconCircle, { backgroundColor: colors.flow.expenseBg, borderColor: colors.flow.expenseBorder }]}>
-                  <ArrowUpRight size={12} color={colors.flow.expense} />
-                </View>
-                <Text style={styles.flowLabel}>Pengeluaran</Text>
-              </View>
-              <Text
-                style={[styles.flowValue, { color: colors.flow.expense }]}
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.8}
-              >
-                -{formatRupiah(summary.totalExpense)}
-              </Text>
-            </View>
-          </View>
-
-          {/* Visual Cash Flow Ratio Bar */}
-          {totalFlow > 0 && (
-            <View style={styles.ratioSection}>
-              <View style={styles.ratioBarContainer}>
-                <View
-                  style={[
-                    styles.ratioBarIncome,
-                    { flex: Math.max(0.02, summary.totalIncome) },
-                  ]}
-                />
-                <View
-                  style={[
-                    styles.ratioBarExpense,
-                    { flex: Math.max(0.02, summary.totalExpense) },
-                  ]}
-                />
-              </View>
-              <View style={styles.ratioLegendRow}>
-                <View style={styles.ratioLegendItem}>
-                  <View style={[styles.ratioDot, { backgroundColor: colors.flow.income }]} />
-                  <Text style={styles.ratioLegendText}>Pemasukan {incomeRatio}%</Text>
-                </View>
-                {savingsRate > 0 && (
-                  <View style={styles.savingsRateBadge}>
-                    <Sparkles size={10} color={colors.gold.champagne} />
-                    <Text style={styles.savingsRateText}>Tabungan {savingsRate}%</Text>
-                  </View>
-                )}
-                <View style={styles.ratioLegendItem}>
-                  <View style={[styles.ratioDot, { backgroundColor: colors.flow.expense }]} />
-                  <Text style={styles.ratioLegendText}>Pengeluaran {expenseRatio}%</Text>
-                </View>
-              </View>
-            </View>
-          )}
-
-          {summary.totalFees > 0 && (
-            <View style={styles.feeNoticeRow}>
-              <Text style={styles.feeNoticeText}>Biaya Admin / Transfer Periode Ini</Text>
-              <Text style={[styles.feeNoticeVal, { color: colors.flow.expense }]}>-{formatRupiah(summary.totalFees)}</Text>
-            </View>
-          )}
-        </View>
+        {/* 2. Executive Cash Flow Circular Diagram & KPI Cards */}
+        <CashFlowCircularChart
+          inflow={summary.totalIncome}
+          outflow={summary.totalExpense}
+          netCashFlow={summary.netCashFlow}
+          totalFees={summary.totalFees}
+        />
 
         {/* 3. Fluid Segmented Switcher */}
         <View style={styles.segmentContainer}>
@@ -736,18 +613,21 @@ export default function ReportsScreen() {
                       },
                     ]}
                   >
-                    <Text
-                      style={[
-                        styles.budgetHealthBadgeText,
-                        {
-                          color: overBudgetCategoriesCount > 0 ? colors.flow.expense : colors.flow.income,
-                        },
-                      ]}
-                    >
-                      {overBudgetCategoriesCount > 0
-                        ? `${overBudgetCategoriesCount} Over Limit`
-                        : 'Semua Terkontrol ✓'}
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                      {overBudgetCategoriesCount === 0 && <Check size={10} color={colors.flow.income} />}
+                      <Text
+                        style={[
+                          styles.budgetHealthBadgeText,
+                          {
+                            color: overBudgetCategoriesCount > 0 ? colors.flow.expense : colors.flow.income,
+                          },
+                        ]}
+                      >
+                        {overBudgetCategoriesCount > 0
+                          ? `${overBudgetCategoriesCount} Over Limit`
+                          : 'Semua Terkontrol'}
+                      </Text>
+                    </View>
                   </View>
                 </View>
 
@@ -786,7 +666,7 @@ export default function ReportsScreen() {
                   style={styles.secondaryActionBtn}
                   onPress={() => {
                     hapticSelection();
-                    router.push('/budgets');
+                    router.push('/pockets');
                   }}
                 >
                   <Sliders size={12} color={colors.text.secondary} />
@@ -954,7 +834,7 @@ export default function ReportsScreen() {
                   style={styles.secondaryActionBtn}
                   onPress={() => {
                     hapticSelection();
-                    router.push('/goals');
+                    router.push('/pockets');
                   }}
                 >
                   <Text style={styles.secondaryActionText}>Semua</Text>
@@ -1005,7 +885,7 @@ export default function ReportsScreen() {
                     <View style={styles.goalTopRow}>
                       <View style={styles.goalHeaderLeft}>
                         <View style={styles.goalEmojiCircle}>
-                          <Text style={styles.goalEmojiText}>{g.emoji || '🎯'}</Text>
+                          <AppIcon name={g.emoji} defaultFallback="target" size={16} color={colors.gold.champagne} />
                         </View>
                         <View style={styles.goalInfoCol}>
                           <Text style={styles.goalTitle}>{g.name}</Text>
@@ -1023,7 +903,10 @@ export default function ReportsScreen() {
                           ]}
                         >
                           {isAchieved ? (
-                            <Text style={styles.goalBadgeAchievedText}>Tercapai 🎉</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                              <Sparkles size={10} color={colors.gold.champagne} />
+                              <Text style={styles.goalBadgeAchievedText}>Tercapai</Text>
+                            </View>
                           ) : (
                             <Text style={styles.goalBadgeActiveText}>{percent}%</Text>
                           )}
@@ -1167,20 +1050,24 @@ export default function ReportsScreen() {
             </View>
 
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>PILIH IKON EMOJI</Text>
+              <Text style={styles.inputLabel}>PILIH IKON TARGET</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.catPillRow}>
-                {['🎯', '🛡️', '✈️', '💻', '🚗', '🏠', '💍', '👶', '🎓', '🏖️'].map((emoji) => {
-                  const isSelected = newGoalEmoji === emoji;
+                {GOAL_ICON_KEYS.map((iconKey) => {
+                  const isSelected = newGoalEmoji === iconKey;
                   return (
                     <TouchableOpacity
-                      key={emoji}
+                      key={iconKey}
                       style={[styles.catPill, isSelected && styles.catPillSelected]}
                       onPress={() => {
                         hapticSelection();
-                        setNewGoalEmoji(emoji);
+                        setNewGoalEmoji(iconKey);
                       }}
                     >
-                      <Text style={{ fontSize: 16 }}>{emoji}</Text>
+                      <AppIcon
+                        name={iconKey}
+                        size={16}
+                        color={isSelected ? (isDark ? '#090A0E' : '#FFFFFF') : colors.gold.champagne}
+                      />
                     </TouchableOpacity>
                   );
                 })}

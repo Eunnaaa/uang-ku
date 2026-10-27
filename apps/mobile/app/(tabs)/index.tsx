@@ -8,7 +8,7 @@ import {
   StyleSheet,
   SafeAreaView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import {
   Sparkles,
   Wallet,
@@ -23,6 +23,8 @@ import {
   Receipt,
   Layers,
   RefreshCw,
+  Tag,
+  Users,
 } from 'lucide-react-native';
 import { type TransactionModel, type AccountModel, formatRupiah } from '@uangku/contracts';
 import * as SecureStore from 'expo-secure-store';
@@ -114,6 +116,12 @@ export default function HomeScreen() {
     loadData();
   }, [loadData]);
 
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData])
+  );
+
   const onRefresh = async () => {
     setRefreshing(true);
     try {
@@ -192,7 +200,7 @@ export default function HomeScreen() {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.accountsScroll}
         >
-          {accounts.map((acc) => (
+          {accounts.filter((a) => !a.isHidden).map((acc) => (
             <TouchableOpacity
               key={acc.id}
               activeOpacity={0.75}
@@ -203,11 +211,12 @@ export default function HomeScreen() {
               style={[
                 styles.accountCard,
                 acc.isDefault && styles.accountCardDefault,
+                acc.color ? { borderColor: isDark ? 'rgba(255, 255, 255, 0.1)' : colors.border.subtle } : null,
               ]}
             >
               <View style={styles.accountCardTop}>
-                <View style={styles.accountIconBg}>
-                  {getAccountIcon(acc.type, colors.gold.champagne)}
+                <View style={[styles.accountIconBg, acc.color ? { borderColor: acc.color, borderWidth: 1 } : null]}>
+                  {getAccountIcon(acc.type, acc.color || colors.gold.champagne)}
                 </View>
                 <View style={styles.accountTypeBadge}>
                   <Text style={styles.accountType}>{getAccountTypeName(acc.type)}</Text>
@@ -241,52 +250,22 @@ export default function HomeScreen() {
           </TouchableOpacity>
         </ScrollView>
 
-        {/* Quick Tools Grid (6 Tools) */}
+        {/* Quick Tools Row (Unified Essential Tools) */}
         <View style={styles.quickToolsRow}>
           <TouchableOpacity
             style={styles.quickToolBtn}
             activeOpacity={0.75}
             onPress={() => {
               hapticSelection();
-              router.push('/budgets');
+              router.push('/pockets');
             }}
           >
             <View style={styles.quickToolIconBg}>
-              <PieChart size={16} color={colors.gold.champagne} />
+              <Users size={16} color={colors.gold.champagne} />
             </View>
-            <Text style={styles.quickToolLabel}>Anggaran</Text>
+            <Text style={styles.quickToolLabel}>Kantong</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.quickToolBtn}
-            activeOpacity={0.75}
-            onPress={() => {
-              hapticSelection();
-              router.push('/goals');
-            }}
-          >
-            <View style={styles.quickToolIconBg}>
-              <Target size={16} color={colors.gold.champagne} />
-            </View>
-            <Text style={styles.quickToolLabel}>Target</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.quickToolBtn}
-            activeOpacity={0.75}
-            onPress={() => {
-              hapticSelection();
-              router.push('/recurring');
-            }}
-          >
-            <View style={styles.quickToolIconBg}>
-              <Repeat size={16} color={colors.gold.champagne} />
-            </View>
-            <Text style={styles.quickToolLabel}>Berulang</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={[styles.quickToolsRow, { marginTop: 8 }]}>
           <TouchableOpacity
             style={styles.quickToolBtn}
             activeOpacity={0.75}
@@ -306,13 +285,13 @@ export default function HomeScreen() {
             activeOpacity={0.75}
             onPress={() => {
               hapticSelection();
-              router.push('/pockets');
+              router.push('/recurring');
             }}
           >
             <View style={styles.quickToolIconBg}>
-              <Layers size={16} color={colors.gold.champagne} />
+              <Repeat size={16} color={colors.gold.champagne} />
             </View>
-            <Text style={styles.quickToolLabel}>Kantong</Text>
+            <Text style={styles.quickToolLabel}>Jadwal</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -320,18 +299,13 @@ export default function HomeScreen() {
             activeOpacity={0.75}
             onPress={() => {
               hapticSelection();
-              router.push('/bank-sync');
+              router.push('/categories');
             }}
           >
             <View style={styles.quickToolIconBg}>
-              <Landmark size={16} color={colors.gold.champagne} />
-              {pendingMutationsCount > 0 && (
-                <View style={styles.quickToolBadgeDot}>
-                  <Text style={styles.quickToolBadgeDotText}>{pendingMutationsCount}</Text>
-                </View>
-              )}
+              <Tag size={16} color={colors.gold.champagne} />
             </View>
-            <Text style={styles.quickToolLabel}>Bank Sync</Text>
+            <Text style={styles.quickToolLabel}>Kategori</Text>
           </TouchableOpacity>
         </View>
 

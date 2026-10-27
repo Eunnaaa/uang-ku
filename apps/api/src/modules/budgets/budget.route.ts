@@ -24,30 +24,7 @@ export interface BudgetRecord {
   updatedAt: string;
 }
 
-export const demoBudgets: BudgetRecord[] = [
-  {
-    id: 'b1000000-0000-0000-0000-000000000001',
-    userId: '00000000-0000-0000-0000-000000000001',
-    categoryId: 'c1000000-0000-0000-0000-000000000001', // Makanan
-    amount: 1500000,
-    currency: 'IDR',
-    period: 'monthly',
-    isActive: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'b2000000-0000-0000-0000-000000000002',
-    userId: '00000000-0000-0000-0000-000000000001',
-    categoryId: 'c1000000-0000-0000-0000-000000000002', // Transportasi
-    amount: 500000,
-    currency: 'IDR',
-    period: 'monthly',
-    isActive: true,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
+export const demoBudgets: BudgetRecord[] = [];
 
 export const budgetRoutes = new Elysia({ prefix: '/api/v1/budgets' })
   .use(authMiddleware)

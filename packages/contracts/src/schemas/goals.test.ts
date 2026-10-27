@@ -5,7 +5,7 @@ describe('Financial Goals Schema Validation (PRD Section 61)', () => {
   it('validates a valid goal creation successfully', () => {
     const input = {
       name: 'Dana Darurat 6 Bulan',
-      emoji: '🛡️',
+      emoji: 'shield',
       targetAmount: 30000000,
       initialAmount: 5000000,
       targetDate: '2026-12-31',
@@ -13,7 +13,7 @@ describe('Financial Goals Schema Validation (PRD Section 61)', () => {
 
     const parsed = CreateGoalSchema.parse(input);
     expect(parsed.name).toBe('Dana Darurat 6 Bulan');
-    expect(parsed.emoji).toBe('🛡️');
+    expect(parsed.emoji).toBe('shield');
     expect(parsed.targetAmount).toBe(30000000);
     expect(parsed.initialAmount).toBe(5000000);
   });
@@ -25,7 +25,7 @@ describe('Financial Goals Schema Validation (PRD Section 61)', () => {
     };
 
     const parsed = CreateGoalSchema.parse(input);
-    expect(parsed.emoji).toBe('🎯');
+    expect(parsed.emoji).toBe('target');
     expect(parsed.initialAmount).toBe(0);
   });
 

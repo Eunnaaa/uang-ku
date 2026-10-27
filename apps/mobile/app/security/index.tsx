@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -29,7 +29,8 @@ import {
 } from 'lucide-react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
-import { colors } from '../../src/theme/colors';
+import { colors, type ThemeColors } from '../../src/theme/colors';
+import { useTheme } from '../../src/theme/themeContext';
 import {
   hapticMedium,
   hapticSelection,
@@ -47,6 +48,8 @@ const AUTOLOCK_KEY = 'uangku_autolock_timeout';
 export default function SecurityCenterScreen() {
   const router = useRouter();
   const toast = useToast();
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
 
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [hasBiometricHardware, setHasBiometricHardware] = useState(false);
@@ -500,7 +503,8 @@ export default function SecurityCenterScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) =>
+  StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.bg.base,

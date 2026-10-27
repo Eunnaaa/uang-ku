@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,8 @@ import {
   Platform,
 } from 'react-native';
 import { CheckCircle2, AlertCircle, Info, AlertTriangle, X } from 'lucide-react-native';
-import { colors } from '../theme/colors';
+import { colors, type ThemeColors } from '../theme/colors';
+import { useTheme } from '../theme/themeContext';
 import { hapticSuccess, hapticError, hapticMedium, hapticSelection } from '../theme/haptics';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
@@ -43,6 +44,8 @@ export function useToast() {
 }
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
   const [toast, setToast] = useState<ToastItem | null>(null);
   const translateY = useRef(new Animated.Value(-120)).current;
   const opacity = useRef(new Animated.Value(0)).current;
@@ -212,7 +215,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) =>
+  StyleSheet.create({
   toastContainer: {
     position: 'absolute',
     top: Platform.OS === 'android' ? 24 : 12,

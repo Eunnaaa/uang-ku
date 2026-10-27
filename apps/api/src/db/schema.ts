@@ -44,23 +44,52 @@ export const categories = pgTable('categories', {
   index('idx_categories_user').on(table.userId, table.isArchived)
 ]);
 
-// 3.1 Pockets Table (PRD Section 79)
+// 3.1 Pockets Table (PRD Section 79 & Shared Pockets)
 export const pockets = pgTable('pockets', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: uuid('user_id').references(() => profiles.id, { onDelete: 'cascade' }).notNull(),
   accountId: uuid('account_id').references(() => accounts.id, { onDelete: 'cascade' }).notNull(),
   name: varchar('name', { length: 50 }).notNull(),
-  emoji: varchar('emoji', { length: 10 }).default('💰'),
-  type: varchar('type', { length: 20 }).notNull(), // 'spending' | 'saving' | 'locked' | 'bills'
+  emoji: varchar('emoji', { length: 20 }).default('wallet'),
+  type: varchar('type', { length: 20 }).notNull(), // 'spending' | 'saving' | 'locked' | 'bills' | 'shared'
   allocatedBalance: bigint('allocated_balance', { mode: 'number' }).default(0).notNull(),
   targetAmount: bigint('target_amount', { mode: 'number' }),
   isLocked: boolean('is_locked').default(false).notNull(),
   sortOrder: integer('sort_order').default(0).notNull(),
+  isShared: boolean('is_shared').default(false).notNull(),
+  inviteCode: varchar('invite_code', { length: 20 }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_pockets_user_account').on(table.userId, table.accountId),
+  index('idx_pockets_invite_code').on(table.inviteCode),
   check('chk_pocket_allocated', sql`allocated_balance >= 0`),
+]);
+
+export const pocketMembers = pgTable('pocket_members', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  pocketId: uuid('pocket_id').references(() => pockets.id, { onDelete: 'cascade' }).notNull(),
+  userId: uuid('user_id').references(() => profiles.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 50 }).notNull(),
+  avatarEmoji: varchar('avatar_emoji', { length: 20 }).default('user'),
+  role: varchar('role', { length: 20 }).default('contributor').notNull(), // 'owner' | 'contributor' | 'viewer'
+  totalContributed: bigint('total_contributed', { mode: 'number' }).default(0).notNull(),
+  joinedAt: timestamp('joined_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_pocket_members_pocket').on(table.pocketId),
+]);
+
+export const pocketContributions = pgTable('pocket_contributions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  pocketId: uuid('pocket_id').references(() => pockets.id, { onDelete: 'cascade' }).notNull(),
+  memberId: uuid('member_id').references(() => pocketMembers.id, { onDelete: 'cascade' }),
+  memberName: varchar('member_name', { length: 50 }).notNull(),
+  memberAvatar: varchar('member_avatar', { length: 20 }).default('user'),
+  amount: bigint('amount', { mode: 'number' }).notNull(),
+  note: varchar('note', { length: 100 }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_pocket_contrib_pocket').on(table.pocketId),
 ]);
 
 // 4. Transactions Table
@@ -142,7 +171,7 @@ export const financialGoals = pgTable('financial_goals', {
   id: uuid('id').defaultRandom().primaryKey(),
   userId: uuid('user_id').references(() => profiles.id, { onDelete: 'cascade' }).notNull(),
   name: varchar('name', { length: 100 }).notNull(),
-  emoji: varchar('emoji', { length: 10 }).default('🎯'),
+  emoji: varchar('emoji', { length: 20 }).default('target'),
   targetAmount: bigint('target_amount', { mode: 'number' }).notNull(),
   currentAmount: bigint('current_amount', { mode: 'number' }).default(0).notNull(),
   currency: varchar('currency', { length: 3 }).default('IDR').notNull(),

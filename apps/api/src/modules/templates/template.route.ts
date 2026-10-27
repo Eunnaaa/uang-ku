@@ -9,42 +9,7 @@ import { successResponse } from '../../middleware/error-handler';
 import { db, schema } from '../../db/client';
 import { eq } from 'drizzle-orm';
 
-export const demoTemplates: TemplateModel[] = [
-  {
-    id: 't1000000-0000-0000-0000-000000000001',
-    userId: '00000000-0000-0000-0000-000000000001',
-    name: 'Kopi Kenangan Kenangan Mantan',
-    templatePayload: {
-      type: 'expense',
-      amount: 22000,
-      accountId: 'a2000000-0000-0000-0000-000000000002',
-      categoryId: 'c1000000-0000-0000-0000-000000000001',
-      note: 'Kopi Kenangan Regular Mantan',
-      currency: 'IDR',
-    },
-    sortOrder: 0,
-    useCount: 5,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 't2000000-0000-0000-0000-000000000002',
-    userId: '00000000-0000-0000-0000-000000000001',
-    name: 'Bensin Motor Shell V-Power',
-    templatePayload: {
-      type: 'expense',
-      amount: 35000,
-      accountId: 'a1000000-0000-0000-0000-000000000001',
-      categoryId: 'c1000000-0000-0000-0000-000000000002',
-      note: 'Isi Shell V-Power Full',
-      currency: 'IDR',
-    },
-    sortOrder: 1,
-    useCount: 3,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
+export const demoTemplates: TemplateModel[] = [];
 
 export const templateRoutes = new Elysia({ prefix: '/api/v1/templates' })
   .use(authMiddleware)

@@ -36,10 +36,17 @@ import {
   KeyRound,
   Sun,
   Moon,
+  Target,
+  PieChart,
+  Users,
+  Check,
+  FolderDown,
+  FolderUp,
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as DocumentPicker from 'expo-document-picker';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import { NotificationService } from '../../src/services/notificationService';
@@ -60,6 +67,8 @@ import {
   importTransactionsFromCsv,
   getLocalRecurringRules,
   clearAllLocalTransactions,
+  exportFullLocalBackup,
+  restoreFullLocalBackup,
 } from '../../src/db/sqlite';
 import {
   hapticMedium,
@@ -197,7 +206,7 @@ export default function SettingsScreen() {
       if (scheduled) {
         hapticSuccess();
         setDailyReminderEnabled(true);
-        Alert.alert('Pengingat Aktif 🔔', 'Pengingat harian dijadwalkan setiap pukul 20:00 WIB.');
+        Alert.alert('Pengingat Aktif', 'Pengingat harian dijadwalkan setiap pukul 20:00 WIB.');
       } else {
         hapticError();
         Alert.alert('Izin Notifikasi Ditolak', 'Aktifkan izin notifikasi di Pengaturan HP untuk menerima pengingat harian.');
@@ -253,6 +262,76 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleExportBackup = async () => {
+    hapticMedium();
+    try {
+      const backupJson = await exportFullLocalBackup();
+      const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const fileUri = `${FileSystem.cacheDirectory}UangKu_Backup_${dateStr}.ukbak`;
+
+      await FileSystem.writeAsStringAsync(fileUri, backupJson, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: 'application/json',
+          dialogTitle: 'Simpan Cadangan Data UangKu (.ukbak)',
+          UTI: 'public.json',
+        });
+      } else {
+        Alert.alert('Cadangan Berhasil', `Berkas cadangan tersimpan di: ${fileUri}`);
+      }
+    } catch (err: any) {
+      Alert.alert('Gagal Membuat Cadangan', err.message);
+    }
+  };
+
+  const handleRestoreBackup = async () => {
+    hapticLight();
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['*/*'],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) return;
+
+      const fileAsset = result.assets[0];
+      const content = await FileSystem.readAsStringAsync(fileAsset.uri, {
+        encoding: FileSystem.EncodingType.UTF8,
+      });
+
+      Alert.alert(
+        'Konfirmasi Pemulihan Data',
+        'Memulihkan berkas cadangan akan menggantikan seluruh data transaksi dan alokasi lokal saat ini dengan isi file cadangan. Apakah Anda yakin?',
+        [
+          { text: 'Batal', style: 'cancel' },
+          {
+            text: 'Pulihkan Data',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                hapticSuccess();
+                const res = await restoreFullLocalBackup(content);
+                if (res.success) {
+                  await loadData();
+                  Alert.alert('Pemulihan Sukses', res.message);
+                } else {
+                  Alert.alert('Gagal Pemulihan', res.message);
+                }
+              } catch (err: any) {
+                Alert.alert('Gagal Memproses File', err.message);
+              }
+            },
+          },
+        ]
+      );
+    } catch (err: any) {
+      Alert.alert('Gagal Membaca File', err.message);
+    }
+  };
+
   const handleImportCsv = async () => {
     if (!csvInputText.trim()) {
       hapticError();
@@ -272,7 +351,7 @@ export default function SettingsScreen() {
         setCsvInputText('');
         await loadData();
         Alert.alert(
-          'Impor Berhasil 🎉',
+          'Impor Berhasil',
           `Sebanyak ${res.success} transaksi berhasil diimpor ke basis data lokal.${res.failed > 0 ? ` (${res.failed} baris dilewati karena format tidak valid)` : ''}`
         );
       } else {
@@ -311,7 +390,7 @@ export default function SettingsScreen() {
               hapticSuccess();
               await clearAllLocalTransactions();
               await loadData();
-              Alert.alert('Data Bersih 🎉', 'Semua data transaksi telah direset ke nol. Anda dapat mulai testing dari awal.');
+              Alert.alert('Data Bersih', 'Semua data transaksi telah direset ke nol. Anda dapat mulai testing dari awal.');
             } catch (err: any) {
               hapticError();
               Alert.alert('Gagal Reset', err.message);
@@ -569,11 +648,11 @@ export default function SettingsScreen() {
           >
             <View style={styles.menuLeft}>
               <View style={styles.menuIconCircle}>
-                <Bookmark size={16} color={colors.gold.champagne} />
+                <Users size={16} color={colors.gold.champagne} />
               </View>
               <View>
-                <Text style={styles.menuLabel}>Kantong Keuangan (Pockets)</Text>
-                <Text style={styles.menuSublabel}>Envelope budgeting alokasi saldo terkunci</Text>
+                <Text style={styles.menuLabel}>Kantong Finansial</Text>
+                <Text style={styles.menuSublabel}>Alokasi belanja, target impian & patungan</Text>
               </View>
             </View>
             <ChevronRight size={16} color={colors.text.muted} />
@@ -581,30 +660,10 @@ export default function SettingsScreen() {
         </View>
 
         {/* 4. Fitur Cerdas & Integrasi */}
-        <Text style={styles.sectionTitle}>FITUR CERDAS & INTEGRASI</Text>
+        <Text style={styles.sectionTitle}>ALAT & UTILITAS</Text>
         <View style={styles.menuGroup}>
           <TouchableOpacity
             style={styles.menuItem}
-            activeOpacity={0.7}
-            onPress={() => {
-              hapticSelection();
-              router.push('/bank-sync');
-            }}
-          >
-            <View style={styles.menuLeft}>
-              <View style={styles.menuIconCircle}>
-                <Landmark size={16} color={colors.gold.champagne} />
-              </View>
-              <View>
-                <Text style={styles.menuLabel}>Integrasi Bank & Mutasi</Text>
-                <Text style={styles.menuSublabel}>Impor e-statement & rekonsiliasi cerdas</Text>
-              </View>
-            </View>
-            <ChevronRight size={16} color={colors.text.muted} />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.menuItem, styles.menuItemBorder]}
             activeOpacity={0.7}
             onPress={() => {
               hapticSelection();
@@ -618,6 +677,26 @@ export default function SettingsScreen() {
               <View>
                 <Text style={styles.menuLabel}>Kalkulator Split Bill</Text>
                 <Text style={styles.menuSublabel}>Bagi tagihan resto presisi & kirim WhatsApp</Text>
+              </View>
+            </View>
+            <ChevronRight size={16} color={colors.text.muted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.menuItem, styles.menuItemBorder]}
+            activeOpacity={0.7}
+            onPress={() => {
+              hapticSelection();
+              router.push('/bank-sync');
+            }}
+          >
+            <View style={styles.menuLeft}>
+              <View style={styles.menuIconCircle}>
+                <Landmark size={16} color={colors.gold.champagne} />
+              </View>
+              <View>
+                <Text style={styles.menuLabel}>Impor e-Statement & Rekonsiliasi</Text>
+                <Text style={styles.menuSublabel}>Impor statement bank CSV/PDF</Text>
               </View>
             </View>
             <ChevronRight size={16} color={colors.text.muted} />
@@ -642,8 +721,9 @@ export default function SettingsScreen() {
               </View>
             </View>
             <View style={[styles.syncPill, pendingSyncCount > 0 && styles.syncPillPending]}>
+              {pendingSyncCount === 0 && <Check size={11} color={colors.flow.income} />}
               <Text style={[styles.syncPillText, pendingSyncCount > 0 && styles.syncPillTextPending]}>
-                {pendingSyncCount > 0 ? `${pendingSyncCount} Pending` : 'Sinkron ✓'}
+                {pendingSyncCount > 0 ? `${pendingSyncCount} Pending` : 'Sinkron'}
               </Text>
             </View>
           </TouchableOpacity>
@@ -762,6 +842,40 @@ export default function SettingsScreen() {
               <View>
                 <Text style={styles.menuLabel}>Impor Transaksi (CSV)</Text>
                 <Text style={styles.menuSublabel}>Migrasi data transaksi dari file CSV</Text>
+              </View>
+            </View>
+            <ChevronRight size={16} color={colors.text.muted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.menuItem, styles.menuItemBorder]}
+            activeOpacity={0.7}
+            onPress={handleExportBackup}
+          >
+            <View style={styles.menuLeft}>
+              <View style={styles.menuIconCircle}>
+                <FolderDown size={16} color={colors.gold.champagne} />
+              </View>
+              <View>
+                <Text style={styles.menuLabel}>Buat Cadangan Lengkap (.ukbak)</Text>
+                <Text style={styles.menuSublabel}>Simpan seluruh data transaksi & alokasi ke file</Text>
+              </View>
+            </View>
+            <ChevronRight size={16} color={colors.text.muted} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.menuItem, styles.menuItemBorder]}
+            activeOpacity={0.7}
+            onPress={handleRestoreBackup}
+          >
+            <View style={styles.menuLeft}>
+              <View style={styles.menuIconCircle}>
+                <FolderUp size={16} color={colors.gold.champagne} />
+              </View>
+              <View>
+                <Text style={styles.menuLabel}>Pulihkan dari Cadangan (.ukbak)</Text>
+                <Text style={styles.menuSublabel}>Kembalikan data dari file cadangan UangKu</Text>
               </View>
             </View>
             <ChevronRight size={16} color={colors.text.muted} />
@@ -1245,6 +1359,9 @@ const createStyles = (colors: ThemeColors, isDark: boolean) =>
       color: colors.text.secondary,
     },
     syncPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
       backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : 'rgba(5, 150, 105, 0.12)',
       paddingHorizontal: 8,
       paddingVertical: 4,

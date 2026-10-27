@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -35,7 +35,8 @@ import {
   type AccountModel,
   type TransactionModel,
 } from '@uangku/contracts';
-import { colors } from '../../src/theme/colors';
+import { colors, type ThemeColors } from '../../src/theme/colors';
+import { useTheme } from '../../src/theme/themeContext';
 import {
   getLocalAccounts,
   getLocalBankConnections,
@@ -52,6 +53,8 @@ import { useToast } from '../../src/components/Toast';
 export default function BankSyncScreen() {
   const router = useRouter();
   const toast = useToast();
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
 
   const [connections, setConnections] = useState<BankConnectionModel[]>([]);
   const [mutations, setMutations] = useState<BankMutationModel[]>([]);
@@ -263,7 +266,7 @@ export default function BankSyncScreen() {
             setIsConnectModalOpen(true);
           }}
         >
-          <Plus size={20} color="#090A0E" />
+          <Plus size={20} color={isDark ? '#090A0E' : '#FFFFFF'} />
         </TouchableOpacity>
       </View>
 
@@ -292,7 +295,9 @@ export default function BankSyncScreen() {
 
         {connections.length === 0 ? (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyEmoji}>🏦</Text>
+            <View style={styles.emptyIconWrap}>
+              <Landmark size={32} color={colors.gold.champagne} />
+            </View>
             <Text style={styles.emptyTitle}>Belum Ada Rekening Bank Ditautkan</Text>
             <Text style={styles.emptySubtitle}>
               Tautkan akun bank untuk mengimpor e-statement atau menyinkronkan mutasi pembayaran QRIS secara otomatis.
@@ -376,7 +381,7 @@ export default function BankSyncScreen() {
                   style={[styles.reconcileBtn, styles.createBtn]}
                   onPress={() => handleReconcile(m.id, 'create_new')}
                 >
-                  <CheckCircle2 size={12} color="#090A0E" />
+                  <CheckCircle2 size={12} color={isDark ? '#090A0E' : '#FFFFFF'} />
                   <Text style={styles.createBtnText}>Catat Baru</Text>
                 </TouchableOpacity>
 
@@ -413,7 +418,10 @@ export default function BankSyncScreen() {
       <Modal visible={isConnectModalOpen} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
-            <Text style={styles.modalTitle}>🏦 Tautkan Rekening Bank</Text>
+            <View style={styles.modalTitleRow}>
+              <Landmark size={20} color={colors.gold.champagne} />
+              <Text style={styles.modalTitle}>Tautkan Rekening Bank</Text>
+            </View>
             <Text style={styles.modalSubtitle}>Pilih akun UangKu yang akan ditautkan dengan mutasi bank.</Text>
 
             <Text style={styles.modalLabel}>PILIH AKUN UANGKU</Text>
@@ -480,7 +488,10 @@ export default function BankSyncScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>📄 Impor Mutasi Rekening</Text>
+              <View style={styles.modalTitleRow}>
+                <FileSpreadsheet size={20} color={colors.gold.champagne} />
+                <Text style={styles.modalTitle}>Impor Mutasi Rekening</Text>
+              </View>
               <TouchableOpacity onPress={handleImportSampleStatement}>
                 <Text style={styles.sampleLinkText}>+ Contoh CSV</Text>
               </TouchableOpacity>
@@ -539,7 +550,10 @@ export default function BankSyncScreen() {
       <Modal visible={isMatchModalOpen} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
-            <Text style={styles.modalTitle}>🔗 Tautkan ke Transaksi Manual</Text>
+            <View style={styles.modalTitleRow}>
+              <Link2 size={20} color={colors.gold.champagne} />
+              <Text style={styles.modalTitle}>Tautkan ke Transaksi Manual</Text>
+            </View>
             <Text style={styles.modalSubtitle}>
               Pilih transaksi yang sesuai untuk mutasi: {activeMutationForMatch?.description} ({activeMutationForMatch ? formatRupiah(activeMutationForMatch.amount) : ''})
             </Text>
@@ -609,7 +623,8 @@ export default function BankSyncScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) =>
+  StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.bg.base,
@@ -693,9 +708,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border.subtle,
   },
-  emptyEmoji: {
-    fontSize: 36,
-    marginBottom: 10,
+  emptyIconWrap: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.12)' : 'rgba(180, 83, 9, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
   },
   emptyTitle: {
     fontSize: 15,
@@ -870,9 +890,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 12,
     borderRadius: 10,
-    backgroundColor: '#161925',
+    backgroundColor: colors.bg.elevated,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.border.subtle,
     marginBottom: 8,
   },
   candidateCardSelected: {
@@ -928,10 +948,10 @@ const styles = StyleSheet.create({
   createBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
   },
   ignoreBtn: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
   },
   ignoreBtnText: {
     fontSize: 11,
@@ -944,7 +964,7 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 6,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.04)',
+    borderColor: colors.border.subtle,
   },
   verifiedHeaderRow: {
     flexDirection: 'row',
@@ -984,6 +1004,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: colors.gold.champagne,
+  },
+  modalTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
   },
   modalTitle: {
     fontSize: 18,
@@ -1026,7 +1052,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   accountTabTextActive: {
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
     fontWeight: '700',
   },
   typeSelectorRow: {
@@ -1052,7 +1078,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   typeBtnTextSelected: {
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
     fontWeight: '700',
   },
   textInput: {
@@ -1096,6 +1122,6 @@ const styles = StyleSheet.create({
   submitBtnText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
   },
 });

@@ -16,6 +16,8 @@ import {
   Repeat,
   CloudOff,
   Check,
+  Folder,
+  Receipt,
 } from 'lucide-react-native';
 import { type TransactionModel, formatRupiah } from '@uangku/contracts';
 import { colors, type ThemeColors } from '../theme/colors';
@@ -134,8 +136,9 @@ export function TransactionItem({
             {/* Pocket Allocation Indicator (PRD Section 79.5) */}
             {Boolean(transaction.pocket?.name || (transaction as any).pocketName) && (
               <View style={styles.pocketBadge}>
+                <Folder size={10} color={colors.gold.champagne} />
                 <Text style={styles.pocketText} numberOfLines={1}>
-                  📁 {transaction.pocket?.name || (transaction as any).pocketName}
+                  {transaction.pocket?.name || (transaction as any).pocketName}
                 </Text>
               </View>
             )}
@@ -143,7 +146,8 @@ export function TransactionItem({
             {/* Receipt / Invoice Indicator Badge */}
             {Boolean(transaction.receiptUrl || (transaction as any).receiptUri) && (
               <View style={styles.receiptBadge}>
-                <Text style={styles.receiptBadgeText}>🧾 Nota</Text>
+                <Receipt size={10} color={colors.gold.champagne} />
+                <Text style={styles.receiptBadgeText}>Nota</Text>
               </View>
             )}
 
@@ -242,11 +246,14 @@ const createStyles = (colors: ThemeColors, isDark: boolean) =>
       color: colors.text.secondary,
     },
     pocketBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 3,
       backgroundColor: isDark ? 'rgba(212, 175, 55, 0.12)' : 'rgba(180, 83, 9, 0.1)',
       paddingHorizontal: 6,
       paddingVertical: 1.5,
       borderRadius: 6,
-      maxWidth: 95,
+      maxWidth: 110,
     },
     pocketText: {
       fontSize: 10,

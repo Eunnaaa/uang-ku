@@ -18,6 +18,7 @@ import { recurringRoutes } from './modules/recurring/recurring.route';
 import { appConfigRoutes } from './modules/app-config/app-config.route';
 import { pocketRoutes } from './modules/pockets/pocket.route';
 import { bankConnectionRoutes } from './modules/bank-connections/bank-connection.route';
+import { storageRoutes } from './modules/storage/storage.route';
 import { seedDatabase } from './db/seed';
 
 // Seed PostgreSQL database asynchronously on startup
@@ -44,6 +45,8 @@ const app = new Elysia()
     set.headers['X-XSS-Protection'] = '1; mode=block';
     set.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin';
     set.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()';
+    set.headers['Cross-Origin-Opener-Policy'] = 'same-origin';
+    set.headers['Cross-Origin-Resource-Policy'] = 'same-origin';
   })
   .use(
     swagger({
@@ -97,6 +100,7 @@ const app = new Elysia()
   .use(appConfigRoutes)
   .use(pocketRoutes)
   .use(bankConnectionRoutes)
+  .use(storageRoutes)
   .listen(env.PORT);
 
 console.log(`✨ UangKu Elysia API is running at http://${app.server?.hostname}:${app.server?.port}`);

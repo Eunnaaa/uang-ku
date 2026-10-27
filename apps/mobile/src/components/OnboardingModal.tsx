@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { View, Text, Modal, TouchableOpacity, StyleSheet, Dimensions } from 'react-native';
-import { Sparkles, Zap, ShieldCheck, Lock, ChevronRight, X } from 'lucide-react-native';
-import { colors } from '../theme/colors';
+import { Sparkles, Zap, ShieldCheck, Lock, ChevronRight, X, Wallet, Check } from 'lucide-react-native';
+import { formatRupiah } from '@uangku/contracts';
+import { colors, type ThemeColors } from '../theme/colors';
+import { useTheme } from '../theme/themeContext';
 import { hapticSelection, hapticSuccess, hapticLight } from '../theme/haptics';
+import { getLocalAccounts, updateLocalAccount } from '../db/sqlite';
 
 interface OnboardingModalProps {
   visible: boolean;
@@ -40,22 +43,42 @@ const SLIDES = [
   },
 ];
 
+const PRESET_BALANCES = [0, 100000, 500000, 1000000, 5000000];
+
 export function OnboardingModal({ visible, onClose }: OnboardingModalProps) {
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
   const [currentSlide, setCurrentSlide] = useState(0);
+  const [isSettingInitialBalance, setIsSettingInitialBalance] = useState(false);
+  const [initialBalanceAmount, setInitialBalanceAmount] = useState<number>(0);
 
   const handleNext = () => {
     if (currentSlide < SLIDES.length - 1) {
       hapticSelection();
       setCurrentSlide((prev) => prev + 1);
     } else {
-      hapticSuccess();
-      setCurrentSlide(0);
-      onClose();
+      hapticSelection();
+      // PRD Section 72.2: Alur Initial Balance Setup tepat setelah onboarding slide selesai
+      setIsSettingInitialBalance(true);
     }
   };
 
   const handleSkip = () => {
     hapticLight();
+    // Beri opsi isi saldo awal meski skip tour
+    setIsSettingInitialBalance(true);
+  };
+
+  const handleFinishOnboarding = async () => {
+    try {
+      const accounts = await getLocalAccounts();
+      const defaultAccount = accounts.find((a) => a.isDefault) || accounts[0];
+      if (defaultAccount && initialBalanceAmount > 0) {
+        await updateLocalAccount(defaultAccount.id, { initialBalance: initialBalanceAmount });
+      }
+    } catch {}
+    hapticSuccess();
+    setIsSettingInitialBalance(false);
     setCurrentSlide(0);
     onClose();
   };
@@ -66,87 +89,148 @@ export function OnboardingModal({ visible, onClose }: OnboardingModalProps) {
   return (
     <Modal visible={visible} transparent animationType="fade">
       <View style={styles.backdrop}>
-        <View style={styles.card}>
-          {/* Header Bar */}
-          <View style={styles.topRow}>
-            <View style={styles.stepBadge}>
-              <Text style={styles.stepBadgeText}>
-                {slide.step} / {SLIDES.length}
+        {!isSettingInitialBalance ? (
+          <View style={styles.card}>
+            {/* Header Bar */}
+            <View style={styles.topRow}>
+              <View style={styles.stepBadge}>
+                <Text style={styles.stepBadgeText}>
+                  {slide.step} / {SLIDES.length}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={handleSkip} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <X size={18} color={colors.text.muted} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Icon Circle */}
+            <View style={styles.iconCircle}>
+              <IconComponent size={34} color={colors.gold.primary} />
+            </View>
+
+            {/* Badge & Title */}
+            <Text style={styles.subBadge}>{slide.badge}</Text>
+            <Text style={styles.title}>{slide.title}</Text>
+            <Text style={styles.desc}>{slide.desc}</Text>
+
+            {/* Dots Indicator */}
+            <View style={styles.dotsRow}>
+              {SLIDES.map((_, index) => (
+                <View
+                  key={index}
+                  style={[
+                    styles.dot,
+                    index === currentSlide && styles.dotActive,
+                  ]}
+                />
+              ))}
+            </View>
+
+            {/* Action Buttons */}
+            <View style={styles.actionRow}>
+              {currentSlide < SLIDES.length - 1 ? (
+                <>
+                  <TouchableOpacity style={styles.skipBtn} onPress={handleSkip}>
+                    <Text style={styles.skipBtnText}>Lewati</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.nextBtn} onPress={handleNext}>
+                    <Text style={styles.nextBtnText}>Lanjut</Text>
+                    <ChevronRight size={16} color={isDark ? '#090A0E' : '#FFFFFF'} />
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <TouchableOpacity style={styles.finishBtn} onPress={handleNext}>
+                  <Text style={styles.finishBtnText}>Atur Saldo Awal Dompet</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        ) : (
+          /* PRD Section 72.2: Initial Balance Setup Card */
+          <View style={styles.card}>
+            <View style={styles.topRow}>
+              <View style={styles.stepBadge}>
+                <Text style={styles.stepBadgeText}>Langkah Terakhir</Text>
+              </View>
+              <TouchableOpacity onPress={handleFinishOnboarding} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <X size={18} color={colors.text.muted} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.iconCircle}>
+              <Wallet size={34} color={colors.gold.primary} />
+            </View>
+
+            <Text style={styles.subBadge}>SALDO AWAL</Text>
+            <Text style={styles.title}>Berapa Saldo Kas / Dompetmu Sekarang?</Text>
+            <Text style={styles.desc}>
+              Atur saldo awal Dompet Tunai agar ringkasan asetmu langsung akurat sejak hari pertama.
+            </Text>
+
+            {/* Display Nominal */}
+            <View style={styles.balanceDisplayContainer}>
+              <Text style={styles.balanceDisplayText}>
+                {formatRupiah(initialBalanceAmount)}
               </Text>
             </View>
-            <TouchableOpacity onPress={handleSkip} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <X size={18} color={colors.text.muted} />
+
+            {/* Preset Pills */}
+            <View style={styles.presetRow}>
+              {PRESET_BALANCES.map((p) => {
+                const isSelected = initialBalanceAmount === p;
+                const label = p === 0 ? 'Rp 0' : p >= 1000000 ? `Rp ${p / 1000000} jt` : `Rp ${p / 1000} rb`;
+                return (
+                  <TouchableOpacity
+                    key={p}
+                    style={[styles.presetChip, isSelected && styles.presetChipActive]}
+                    onPress={() => {
+                      hapticSelection();
+                      setInitialBalanceAmount(p);
+                    }}
+                  >
+                    <Text style={[styles.presetChipText, isSelected && styles.presetChipTextActive]}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Confirm Button */}
+            <TouchableOpacity style={styles.finishBtn} activeOpacity={0.8} onPress={handleFinishOnboarding}>
+              <Text style={styles.finishBtnText}>
+                {initialBalanceAmount === 0 ? 'Mulai dengan Rp 0' : 'Simpan Saldo & Masuk'}
+              </Text>
             </TouchableOpacity>
           </View>
-
-          {/* Icon Circle */}
-          <View style={styles.iconCircle}>
-            <IconComponent size={34} color={colors.gold.primary} />
-          </View>
-
-          {/* Badge & Title */}
-          <Text style={styles.subBadge}>{slide.badge}</Text>
-          <Text style={styles.title}>{slide.title}</Text>
-          <Text style={styles.desc}>{slide.desc}</Text>
-
-          {/* Dots Indicator */}
-          <View style={styles.dotsRow}>
-            {SLIDES.map((_, index) => (
-              <View
-                key={index}
-                style={[
-                  styles.dot,
-                  index === currentSlide && styles.dotActive,
-                ]}
-              />
-            ))}
-          </View>
-
-          {/* Action Buttons */}
-          <View style={styles.actionRow}>
-            {currentSlide < SLIDES.length - 1 ? (
-              <>
-                <TouchableOpacity style={styles.skipBtn} onPress={handleSkip}>
-                  <Text style={styles.skipBtnText}>Lewati</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.nextBtn} onPress={handleNext}>
-                  <Text style={styles.nextBtnText}>Lanjut</Text>
-                  <ChevronRight size={16} color="#090A0E" />
-                </TouchableOpacity>
-              </>
-            ) : (
-              <TouchableOpacity style={styles.finishBtn} onPress={handleNext}>
-                <Text style={styles.finishBtnText}>Mulai Gunakan UangKu</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
+        )}
       </View>
     </Modal>
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) =>
+  StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(9, 10, 14, 0.85)',
+    backgroundColor: isDark ? 'rgba(9, 10, 14, 0.85)' : 'rgba(15, 23, 42, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,
   },
   card: {
     width: '100%',
-    backgroundColor: '#12141D',
+    backgroundColor: colors.bg.surface,
     borderRadius: 28,
     paddingHorizontal: 24,
     paddingTop: 20,
     paddingBottom: 24,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(212, 175, 55, 0.3)',
+    borderColor: colors.gold.hairline,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.5,
+    shadowOpacity: isDark ? 0.5 : 0.1,
     shadowRadius: 24,
     elevation: 10,
   },
@@ -215,7 +299,7 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.15)',
   },
   dotActive: {
     width: 20,
@@ -230,7 +314,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 14,
     borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -252,7 +336,7 @@ const styles = StyleSheet.create({
   nextBtnText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
   },
   finishBtn: {
     width: '100%',
@@ -265,6 +349,50 @@ const styles = StyleSheet.create({
   finishBtnText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
+  },
+  balanceDisplayContainer: {
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.04)' : colors.bg.elevated,
+    borderRadius: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    marginVertical: 14,
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(212, 175, 55, 0.25)' : 'rgba(180, 83, 9, 0.2)',
+    width: '100%',
+  },
+  balanceDisplayText: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: colors.gold.champagne,
+  },
+  presetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  presetChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : colors.border.subtle,
+  },
+  presetChipActive: {
+    backgroundColor: isDark ? 'rgba(212, 175, 55, 0.2)' : 'rgba(180, 83, 9, 0.15)',
+    borderColor: colors.gold.primary,
+  },
+  presetChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.text.secondary,
+  },
+  presetChipTextActive: {
+    color: colors.gold.champagne,
+    fontWeight: '700',
   },
 });

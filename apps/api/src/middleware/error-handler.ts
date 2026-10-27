@@ -1,5 +1,7 @@
 import { Elysia } from 'elysia';
 import { ERROR_CODES, type ApiErrorResponse } from '@uangku/contracts';
+import { sentry } from '../utils/sentry';
+import { logger } from '../utils/logger';
 
 export function successResponse<T>(data: T, requestId?: string) {
   return {
@@ -104,6 +106,9 @@ export function handleAppError({ code, error, set }: { code: any; error: any; se
     };
     return Response.json(response, { status: 403 });
   }
+
+  // Capture unexpected 500 exceptions in Sentry and structured logger
+  sentry.captureException(error, { requestId, extra: { code } });
 
   // Default Internal Server Error
   const response: ApiErrorResponse = {

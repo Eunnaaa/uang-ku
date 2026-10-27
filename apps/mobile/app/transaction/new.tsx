@@ -37,7 +37,10 @@ import {
   Star,
   Camera,
   Trash2,
+  Globe,
 } from 'lucide-react-native';
+import { AppIcon } from '../../src/components/AppIcon';
+import { mobileStorageService } from '../../src/services/storageService';
 import {
   formatRupiah,
   type CategoryModel,
@@ -55,6 +58,7 @@ import {
   insertLocalTransaction,
   updateLocalTransaction,
   getLocalTransactions,
+  getLocalTransactionById,
   insertLocalRecurringRule,
   getLocalBudgets,
   getLocalTemplates,
@@ -117,35 +121,32 @@ export default function NewTransactionScreen() {
 
   useEffect(() => {
     async function loadFormMetadata() {
-      const [cats, accs, allTxs, tmpls] = await Promise.all([
+      const [cats, accs, existingTx, tmpls] = await Promise.all([
         getLocalCategories(txType === 'transfer' ? undefined : txType),
         getLocalAccounts(),
-        params.editId ? getLocalTransactions() : Promise.resolve([]),
+        params.editId ? getLocalTransactionById(params.editId) : Promise.resolve(null),
         getLocalTemplates(),
       ]);
       setCategories(cats);
       setAccounts(accs);
       setTemplates(tmpls);
 
-      if (params.editId) {
-        const existingTx = allTxs.find((t) => t.id === params.editId);
-        if (existingTx) {
-          setTxType(existingTx.type);
-          setAmount(existingTx.amount);
-          setTransferFee(existingTx.transferFee || 0);
-          setNote(existingTx.note || '');
-          if (existingTx.receiptUrl) {
-            setReceiptUri(existingTx.receiptUrl);
-          }
-          setSelectedAccountId(existingTx.accountId);
-          if (existingTx.destinationAccountId) {
-            setSelectedDestAccountId(existingTx.destinationAccountId);
-          }
-          if (existingTx.categoryId) {
-            setSelectedCategoryId(existingTx.categoryId);
-          }
-          return;
+      if (existingTx) {
+        setTxType(existingTx.type);
+        setAmount(existingTx.amount);
+        setTransferFee(existingTx.transferFee || 0);
+        setNote(existingTx.note || '');
+        if (existingTx.receiptUrl) {
+          setReceiptUri(existingTx.receiptUrl);
         }
+        setSelectedAccountId(existingTx.accountId);
+        if (existingTx.destinationAccountId) {
+          setSelectedDestAccountId(existingTx.destinationAccountId);
+        }
+        if (existingTx.categoryId) {
+          setSelectedCategoryId(existingTx.categoryId);
+        }
+        return;
       }
 
       // Check presets from external navigation (e.g. Split Bill, Accounts transfer)
@@ -270,6 +271,16 @@ export default function NewTransactionScreen() {
           txDateObj.setDate(txDateObj.getDate() - selectedDaysAgo);
         }
 
+        // Upload receipt to Cloud Storage if available, with graceful fallback to local URI
+        let finalReceiptUrl = receiptUri;
+        if (receiptUri && !receiptUri.startsWith('http')) {
+          try {
+            finalReceiptUrl = await mobileStorageService.uploadReceiptImage(receiptUri);
+          } catch {
+            finalReceiptUrl = receiptUri;
+          }
+        }
+
         if (isEditMode && params.editId) {
           await updateLocalTransaction(params.editId, {
             accountId: selectedAccountId,
@@ -278,7 +289,7 @@ export default function NewTransactionScreen() {
             amount,
             transferFee: txType === 'transfer' ? transferFee : 0,
             note: note.trim() || null,
-            receiptUrl: receiptUri,
+            receiptUrl: finalReceiptUrl,
           });
         } else {
           await insertLocalTransaction({
@@ -290,7 +301,7 @@ export default function NewTransactionScreen() {
             amount,
             transferFee: txType === 'transfer' ? transferFee : 0,
             note: note.trim() || null,
-            receiptUrl: receiptUri,
+            receiptUrl: finalReceiptUrl,
             transactionDate: txDateObj.toISOString(),
           });
 
@@ -379,7 +390,7 @@ export default function NewTransactionScreen() {
             const catName = targetCategory?.name || 'kategori ini';
             const overAmount = projectedSpent - categoryBudget;
             Alert.alert(
-              '⚠️ Melebihi Anggaran Belanja',
+              'Peringatan: Melebihi Anggaran',
               `Transaksi ini akan membuat pengeluaran ${catName} bulan ini menjadi ${formatRupiah(projectedSpent)}, melebihi batas anggaranmu sebesar ${formatRupiah(overAmount)}. Tetap simpan?`,
               [
                 { text: 'Batal', style: 'cancel', onPress: () => setIsSaving(false) },
@@ -648,7 +659,7 @@ export default function NewTransactionScreen() {
           <View style={styles.formCol}>
             <Text style={styles.fieldLabel}>{txType === 'transfer' ? 'DARI AKUN' : 'AKUN'}</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
-              {accounts.map((acc) => {
+              {accounts.filter((a) => !a.isHidden || a.id === selectedAccountId).map((acc) => {
                 const isSelected = selectedAccountId === acc.id;
                 return (
                   <TouchableOpacity
@@ -675,7 +686,7 @@ export default function NewTransactionScreen() {
             <View style={styles.formCol}>
               <Text style={styles.fieldLabel}>KE AKUN TUJUAN</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
-                {accounts.map((acc) => {
+                {accounts.filter((a) => !a.isHidden || a.id === selectedDestAccountId).map((acc) => {
                   const isSelected = selectedDestAccountId === acc.id;
                   return (
                     <TouchableOpacity
@@ -778,12 +789,17 @@ export default function NewTransactionScreen() {
                     setSelectedPocketId(null);
                   }}
                 >
+                  <Globe
+                    size={13}
+                    color={selectedPocketId === null ? (isDark ? '#090A0E' : '#FFFFFF') : colors.gold.champagne}
+                  />
                   <Text style={[styles.accountPillText, selectedPocketId === null && styles.accountPillTextSelected]}>
-                    🌐 Saldo Utama
+                    Saldo Utama
                   </Text>
                 </TouchableOpacity>
                 {accountPockets.map((pkt) => {
                   const isSelected = selectedPocketId === pkt.id;
+                  const iconColor = isSelected ? (isDark ? '#090A0E' : '#FFFFFF') : colors.gold.champagne;
                   return (
                     <TouchableOpacity
                       key={pkt.id}
@@ -793,8 +809,14 @@ export default function NewTransactionScreen() {
                         setSelectedPocketId(pkt.id);
                       }}
                     >
+                      <AppIcon
+                        name={pkt.emoji}
+                        defaultFallback={pkt.isShared ? 'users' : 'wallet'}
+                        size={13}
+                        color={iconColor}
+                      />
                       <Text style={[styles.accountPillText, isSelected && styles.accountPillTextSelected]}>
-                        {pkt.emoji || '💰'} {pkt.name} ({formatRupiah(pkt.allocatedBalance)})
+                        {pkt.name} ({formatRupiah(pkt.allocatedBalance)})
                       </Text>
                     </TouchableOpacity>
                   );

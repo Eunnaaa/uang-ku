@@ -12,7 +12,7 @@ import {
   Modal,
   Image,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { Search, Filter, Trash2, X, Cloud, CloudOff, Edit3, Check, Wallet, ZoomIn, Camera, Layers, Tag } from 'lucide-react-native';
 import { formatRupiah, type TransactionModel, type CategoryModel } from '@uangku/contracts';
 import { colors, type ThemeColors } from '../../src/theme/colors';
@@ -26,6 +26,8 @@ import {
   bulkDeleteLocalTransactions,
   bulkRecategorizeTransactions,
   getLocalCategories,
+  getLocalTransactionHistory,
+  type TransactionHistoryModel,
 } from '../../src/db/sqlite';
 import { hapticSelection, hapticLight, hapticMedium, hapticSuccess } from '../../src/theme/haptics';
 import { useToast } from '../../src/components/Toast';
@@ -91,6 +93,7 @@ export default function TransactionsScreen() {
   const [transactions, setTransactions] = useState<TransactionModel[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedTx, setSelectedTx] = useState<TransactionModel | null>(null);
+  const [txHistory, setTxHistory] = useState<TransactionHistoryModel[]>([]);
   const [isEditingNote, setIsEditingNote] = useState(false);
   const [editNoteText, setEditNoteText] = useState('');
   const [isReceiptFullscreenOpen, setIsReceiptFullscreenOpen] = useState(false);
@@ -127,6 +130,12 @@ export default function TransactionsScreen() {
     loadTransactions();
   }, [loadTransactions]);
 
+  useFocusEffect(
+    useCallback(() => {
+      loadTransactions();
+    }, [loadTransactions])
+  );
+
   const onRefresh = async () => {
     setRefreshing(true);
     try {
@@ -144,6 +153,7 @@ export default function TransactionsScreen() {
     setSelectedTx(tx);
     setIsEditingNote(false);
     setEditNoteText(tx.note || '');
+    getLocalTransactionHistory(tx.id).then(setTxHistory).catch(() => setTxHistory([]));
   };
 
   const handleSaveNote = async () => {
@@ -153,6 +163,7 @@ export default function TransactionsScreen() {
       await updateLocalTransaction(selectedTx.id, { note: editNoteText.trim() || null });
       setSelectedTx((prev) => (prev ? { ...prev, note: editNoteText.trim() || null } : null));
       setIsEditingNote(false);
+      getLocalTransactionHistory(selectedTx.id).then(setTxHistory).catch(() => {});
       toast.showSuccess('Catatan Diperbarui');
       await loadTransactions();
     } catch (err: any) {
@@ -315,10 +326,11 @@ export default function TransactionsScreen() {
       const catMatch = tx.category?.name?.toLowerCase().includes(q);
       const accMatch = tx.account?.name?.toLowerCase().includes(q);
       const destAccMatch = tx.destinationAccount?.name?.toLowerCase().includes(q);
+      const pocketMatch = tx.pocket?.name?.toLowerCase().includes(q);
       const amountMatch = tx.amount.toString().includes(q);
       const formattedAmountMatch = formatRupiah(tx.amount).toLowerCase().includes(q);
-      const dateMatch = tx.transactionDate.toLowerCase().includes(q);
-      return Boolean(noteMatch || catMatch || accMatch || destAccMatch || amountMatch || formattedAmountMatch || dateMatch);
+      const dateMatch = tx.transactionDate ? tx.transactionDate.toLowerCase().includes(q) : false;
+      return Boolean(noteMatch || catMatch || accMatch || destAccMatch || pocketMatch || amountMatch || formattedAmountMatch || dateMatch);
     });
   }, [transactions, searchQuery, amountFilter]);
 
@@ -818,6 +830,30 @@ export default function TransactionsScreen() {
                   </TouchableOpacity>
                 </View>
               ) : null}
+
+              {/* Riwayat Perubahan / Audit Log (PRD Section 69) */}
+              {txHistory.length > 0 && (
+                <View style={styles.historySection}>
+                  <Text style={styles.historySectionTitle}>RIWAYAT PERUBAHAN</Text>
+                  {txHistory.map((h) => (
+                    <View key={h.id} style={styles.historyRow}>
+                      <View style={styles.historyBullet} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.historySummaryText}>{h.summary}</Text>
+                        <Text style={styles.historyDateText}>
+                          {new Date(h.changedAt).toLocaleString('id-ID', {
+                            day: 'numeric',
+                            month: 'short',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
 
               {/* Action Buttons */}
               <View style={styles.modalActionRow}>
@@ -1564,5 +1600,43 @@ const createStyles = (colors: ThemeColors, isDark: boolean) => StyleSheet.create
     borderRadius: 12,
     backgroundColor: isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)',
     alignItems: 'center',
+  },
+  historySection: {
+    backgroundColor: isDark ? 'rgba(255, 255, 255, 0.03)' : colors.bg.elevated,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: isDark ? 'rgba(255, 255, 255, 0.06)' : colors.border.subtle,
+    marginBottom: 16,
+  },
+  historySectionTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.gold.champagne,
+    letterSpacing: 1,
+    marginBottom: 10,
+  },
+  historyRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    marginBottom: 8,
+  },
+  historyBullet: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.gold.primary,
+    marginTop: 5,
+  },
+  historySummaryText: {
+    fontSize: 12,
+    color: colors.text.primary,
+    fontWeight: '500',
+  },
+  historyDateText: {
+    fontSize: 10,
+    color: colors.text.muted,
+    marginTop: 2,
   },
 });

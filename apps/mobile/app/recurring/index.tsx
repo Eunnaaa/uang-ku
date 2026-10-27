@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -35,7 +35,8 @@ import {
   type RecurringRuleModel,
   type RecurringFrequency,
 } from '@uangku/contracts';
-import { colors } from '../../src/theme/colors';
+import { colors, type ThemeColors } from '../../src/theme/colors';
+import { useTheme } from '../../src/theme/themeContext';
 import {
   getLocalRecurringRules,
   insertLocalRecurringRule,
@@ -61,6 +62,8 @@ const FREQUENCY_OPTIONS: { key: RecurringFrequency; label: string; period: strin
 export default function RecurringScreen() {
   const router = useRouter();
   const toast = useToast();
+  const { colors, isDark } = useTheme();
+  const styles = useMemo(() => createStyles(colors, isDark), [colors, isDark]);
   const [refreshing, setRefreshing] = useState(false);
   const [rules, setRules] = useState<RecurringRuleModel[]>([]);
   const [accounts, setAccounts] = useState<AccountModel[]>([]);
@@ -256,7 +259,7 @@ export default function RecurringScreen() {
             setIsAddModalOpen(true);
           }}
         >
-          <Plus size={14} color="#090A0E" />
+          <Plus size={14} color={isDark ? '#090A0E' : '#FFFFFF'} />
           <Text style={styles.addBtnText}>Jadwal Baru</Text>
         </TouchableOpacity>
       </View>
@@ -342,7 +345,7 @@ export default function RecurringScreen() {
                 setIsAddModalOpen(true);
               }}
             >
-              <Plus size={14} color="#090A0E" />
+              <Plus size={14} color={isDark ? '#090A0E' : '#FFFFFF'} />
               <Text style={styles.emptyActionText}>Buat Jadwal Pertama</Text>
             </TouchableOpacity>
           </View>
@@ -626,7 +629,7 @@ export default function RecurringScreen() {
                 activeOpacity={0.8}
                 onPress={handleSaveRule}
               >
-                <Sparkles size={16} color="#090A0E" />
+                <Sparkles size={16} color={isDark ? '#090A0E' : '#FFFFFF'} />
                 <Text style={styles.saveSubmitText}>Simpan Jadwal Rutin</Text>
               </TouchableOpacity>
             </ScrollView>
@@ -637,7 +640,8 @@ export default function RecurringScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors, isDark: boolean) =>
+  StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.bg.base,
@@ -689,7 +693,7 @@ const styles = StyleSheet.create({
   addBtnText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
   },
   container: {
     flex: 1,
@@ -821,7 +825,7 @@ const styles = StyleSheet.create({
   emptyActionText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
   },
   ruleCard: {
     backgroundColor: colors.bg.surface,
@@ -928,7 +932,7 @@ const styles = StyleSheet.create({
   executeBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
   },
   deleteBtn: {
     padding: 6,
@@ -1100,7 +1104,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   selectChipTextActive: {
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
     fontWeight: '700',
   },
   saveSubmitBtn: {
@@ -1116,6 +1120,6 @@ const styles = StyleSheet.create({
   saveSubmitText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#090A0E',
+    color: isDark ? '#090A0E' : '#FFFFFF',
   },
 });

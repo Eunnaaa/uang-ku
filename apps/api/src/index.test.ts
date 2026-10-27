@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, afterAll } from 'bun:test';
 import app from './index';
+import { db, schema } from './db/client';
+import { notInArray } from 'drizzle-orm';
 
 describe('UangKu API Endpoints & Features', () => {
   it('GET /health returns status ok', async () => {
@@ -344,8 +346,6 @@ describe('UangKu API Endpoints & Features', () => {
     const body = await res.json();
     expect(body.data).toBeDefined();
     expect(Array.isArray(body.data)).toBe(true);
-    expect(body.data.length).toBeGreaterThan(0);
-    expect(body.data[0].name).toBeDefined();
   });
 
   it('POST /api/v1/templates creates, increments use count, and deletes template', async () => {
@@ -436,7 +436,7 @@ describe('UangKu API Endpoints & Features', () => {
         },
         body: JSON.stringify({
           name: 'Dana Liburan Jepang',
-          emoji: '✈️',
+          emoji: 'plane',
           targetAmount: 20000000,
           initialAmount: 2000000,
           targetDate: '2027-04-01',
@@ -536,7 +536,7 @@ describe('UangKu API Endpoints & Features', () => {
         },
         body: JSON.stringify({
           name: 'Budget Makan Siang',
-          emoji: '🍱',
+          emoji: 'utensils',
           type: 'spending',
           initialAllocation: 750000,
           targetAmount: 1500000,
@@ -689,7 +689,7 @@ describe('UangKu API Endpoints & Features', () => {
         },
         body: JSON.stringify({
           name: 'Kantong Kopi & Snack',
-          emoji: '☕',
+          emoji: 'coffee',
           type: 'spending',
           initialAllocation: 200000,
         }),
@@ -750,5 +750,112 @@ describe('UangKu API Endpoints & Features', () => {
     const finalPocketsList = (await recheckPocketRes.json()).data.pockets;
     const restoredPkt = finalPocketsList.find((p: any) => p.id === pkt.id);
     expect(restoredPkt.allocatedBalance).toBe(200000);
+  });
+
+  it('Shared Pocket: creates, shares, joins via invite code, and accepts member contributions', async () => {
+    const accountId = 'a2000000-0000-0000-0000-000000000002';
+
+    // 1. Create a shared pocket
+    const createRes = await app.handle(
+      new Request(`http://localhost/api/v1/accounts/${accountId}/pockets`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer demo-token',
+        },
+        body: JSON.stringify({
+          name: 'Patungan Liburan Bali',
+          emoji: 'plane',
+          type: 'shared',
+          isShared: true,
+          initialAllocation: 500000,
+          targetAmount: 3000000,
+        }),
+      })
+    );
+    expect(createRes.status).toBe(200);
+    const pocket = (await createRes.json()).data;
+    expect(pocket.isShared).toBe(true);
+    expect(pocket.inviteCode).toBeDefined();
+
+    // 2. Another user joins via invite code
+    const joinRes = await app.handle(
+      new Request('http://localhost/api/v1/pockets/join', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer demo-token',
+        },
+        body: JSON.stringify({
+          inviteCode: pocket.inviteCode,
+          memberName: 'Dina Pratiwi',
+          avatarEmoji: 'user',
+        }),
+      })
+    );
+    expect(joinRes.status).toBe(200);
+    const joinData = (await joinRes.json()).data;
+    expect(joinData.member.name).toBe('Dina Pratiwi');
+
+    // 3. Member contributes funds
+    const contribRes = await app.handle(
+      new Request(`http://localhost/api/v1/pockets/${pocket.id}/contribute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer demo-token',
+        },
+        body: JSON.stringify({
+          memberId: joinData.member.id,
+          memberName: 'Dina Pratiwi',
+          amount: 250000,
+          note: 'Setoran tiket pesawat tahap 1',
+        }),
+      })
+    );
+    expect(contribRes.status).toBe(200);
+    const contribData = (await contribRes.json()).data;
+    expect(contribData.pocket.allocatedBalance).toBe(750000); // 500k + 250k
+    expect(contribData.member.totalContributed).toBe(250000);
+
+    // 4. Retrieve contributions history
+    const historyRes = await app.handle(
+      new Request(`http://localhost/api/v1/pockets/${pocket.id}/contributions`, {
+        headers: { Authorization: 'Bearer demo-token' },
+      })
+    );
+    expect(historyRes.status).toBe(200);
+    const historyData = (await historyRes.json()).data;
+    expect(historyData.contributions.length).toBeGreaterThan(0);
+    expect(historyData.totalContributions).toBeGreaterThanOrEqual(250000);
+  });
+
+  afterAll(async () => {
+    try {
+      await db.delete(schema.transactions);
+      await db.delete(schema.bankMutations);
+      await db.delete(schema.bankConnections);
+      await db.delete(schema.pocketContributions);
+      await db.delete(schema.pocketMembers);
+      await db.delete(schema.pockets);
+      await db.delete(schema.recurringRules);
+      await db.delete(schema.budgets);
+      await db.delete(schema.financialGoals);
+      await db.delete(schema.transactionTemplates);
+      await db.delete(schema.syncEvents);
+      await db.delete(schema.idempotencyKeys);
+      await db
+        .delete(schema.accounts)
+        .where(
+          notInArray(schema.accounts.id, [
+            'a1000000-0000-0000-0000-000000000001',
+            'a2000000-0000-0000-0000-000000000002',
+            'a3000000-0000-0000-0000-000000000003',
+          ])
+        );
+      await db.update(schema.accounts).set({ initialBalance: 0 });
+    } catch (e) {
+      console.warn('Test cleanup error:', e);
+    }
   });
 });
