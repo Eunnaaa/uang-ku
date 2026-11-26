@@ -7,7 +7,7 @@ export const budgetStatusEnum = z.enum(['on_track', 'warning', 'exceeded']);
 export type BudgetStatus = z.infer<typeof budgetStatusEnum>;
 
 export const createBudgetSchema = z.object({
-  categoryId: z.string().uuid({ message: 'Category ID harus berupa UUID valid' }),
+  categoryId: z.guid({ message: 'Category ID harus berupa UUID valid' }),
   amount: z
     .number()
     .int({ message: 'Amount harus berupa bilangan bulat integer' })

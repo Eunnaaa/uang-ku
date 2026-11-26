@@ -1,265 +1,110 @@
+import { createHash } from 'node:crypto';
 import { Elysia } from 'elysia';
-import {
-  createBankConnectionSchema,
-  importStatementSchema,
-  reconcileMutationSchema,
-  type BankConnectionModel,
-  type BankMutationModel,
-} from '@uangku/contracts';
+import { and, desc, eq, getTableColumns, inArray, isNull, or, sql } from 'drizzle-orm';
+import { createBankConnectionSchema, importStatementSchema, parseBankStatement, reconcileMutationSchema } from '@uangku/contracts';
 import { authMiddleware } from '../../middleware/auth';
-import { successResponse, errorHandler } from '../../middleware/error-handler';
-import { demoTransactions } from '../transactions/transaction.route';
+import { successResponse } from '../../middleware/error-handler';
 import { db, schema } from '../../db/client';
-import { eq, and } from 'drizzle-orm';
+import { createEntry } from '../../db/ledger';
 
-export const demoBankConnections: BankConnectionModel[] = [];
-
-export const demoBankMutations: BankMutationModel[] = [];
+const { accounts, categories, pockets, profiles, bankConnections: connections, bankMutations: mutations, transactions } = schema;
 
 export const bankConnectionRoutes = new Elysia({ prefix: '/api/v1' })
-  .use(errorHandler)
   .use(authMiddleware)
-  .get('/bank-connections', async ({ user }) => {
-    const list = demoBankConnections.filter((c) => c.userId === user.userId);
-    return successResponse(list);
-  })
+  .get('/bank-connections', async ({ user }) =>
+    successResponse(await db.select().from(connections).where(eq(connections.userId, user.userId))))
   .post('/bank-connections', async ({ body, user }) => {
     const input = createBankConnectionSchema.parse(body);
-
-    const newConnection: BankConnectionModel = {
-      id: crypto.randomUUID(),
-      userId: user.userId,
-      accountId: input.accountId,
-      provider: input.provider,
-      institutionCode: input.institutionCode.toUpperCase(),
-      maskedAccountNumber: input.maskedAccountNumber ?? null,
-      status: 'active',
-      lastSyncedAt: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    demoBankConnections.unshift(newConnection);
-
-    try {
-      await db.insert(schema.bankConnections).values({
-        id: newConnection.id,
-        userId: user.userId,
-        accountId: newConnection.accountId,
-        provider: newConnection.provider,
-        institutionCode: newConnection.institutionCode,
-        maskedAccountNumber: newConnection.maskedAccountNumber,
-        status: newConnection.status,
-      });
-    } catch {}
-
-    return successResponse(newConnection);
+    const [account] = await db.select({ id: accounts.id }).from(accounts)
+      .where(and(eq(accounts.userId, user.userId), eq(accounts.id, input.accountId)));
+    if (!account) throw new Error('RESOURCE_NOT_FOUND');
+    const [row] = await db.insert(connections).values({ ...input, userId: user.userId,
+      institutionCode: input.institutionCode.toUpperCase() }).returning();
+    return successResponse(row);
   })
   .delete('/bank-connections/:id', async ({ params, user }) => {
-    const idx = demoBankConnections.findIndex((c) => c.id === params.id && c.userId === user.userId);
-    if (idx === -1) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    demoBankConnections.splice(idx, 1);
-
-    // Cascading delete mutations belonging to this connection
-    for (let i = demoBankMutations.length - 1; i >= 0; i--) {
-      if (demoBankMutations[i].connectionId === params.id) {
-        demoBankMutations.splice(i, 1);
-      }
-    }
-
-    try {
-      await db.delete(schema.bankMutations).where(eq(schema.bankMutations.connectionId, params.id));
-      await db.delete(schema.bankConnections).where(eq(schema.bankConnections.id, params.id));
-    } catch {}
-
-    return successResponse({ id: params.id, deleted: true });
+    const [row] = await db.delete(connections).where(and(eq(connections.id, params.id), eq(connections.userId, user.userId))).returning();
+    if (!row) throw new Error('RESOURCE_NOT_FOUND');
+    return successResponse({ id: row.id, deleted: true });
   })
-  .get('/bank-mutations', async ({ query, user }) => {
-    const userConnectionIds = new Set(
-      demoBankConnections.filter((c) => c.userId === user.userId).map((c) => c.id)
-    );
-
-    let list = demoBankMutations.filter((m) => userConnectionIds.has(m.connectionId));
-
-    if (query?.status) {
-      list = list.filter((m) => m.reconciliationStatus === query.status);
-    }
-    if (query?.connectionId) {
-      list = list.filter((m) => m.connectionId === query.connectionId);
-    }
-
-    return successResponse(list);
-  })
-  .post('/bank-connections/:id/import-statement', async ({ params, body, user, set }) => {
-    const connection = demoBankConnections.find((c) => c.id === params.id && c.userId === user.userId);
-    if (!connection) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    const { statementText, format } = importStatementSchema.parse(body);
-
-    // Heuristic e-Statement lines parser
-    const lines = statementText
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0 && !l.startsWith('Tanggal') && !l.startsWith('#'));
-
-    const importedMutations: BankMutationModel[] = [];
-    const matchedCount = { matched: 0, pending: 0 };
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      // Format: Date, Description, Amount, Type (CR/DB or +/-)
-      const parts = line.split(',').map((p) => p.trim().replace(/^["']|["']$/g, ''));
-      if (parts.length < 3) continue;
-
-      const dateStr = parts[0];
-      const desc = parts[1];
-      const amountRaw = parseInt(parts[2].replace(/\D/g, ''), 10);
-      if (isNaN(amountRaw) || amountRaw <= 0) continue;
-
-      const typeStr = parts[3]?.toUpperCase() || (line.includes('CR') ? 'credit' : 'debit');
-      const mutationType: 'debit' | 'credit' = typeStr.includes('CR') || typeStr === 'credit' ? 'credit' : 'debit';
-      const extId = `IMP-${connection.institutionCode}-${Date.now()}-${i}`;
-
-      // Idempotent duplicate check
-      const exists = demoBankMutations.some((m) => m.externalId === extId);
-      if (exists) continue;
-
-      // Smart Reconciliation: Search matching manual transaction within +-24 hours
-      const targetTxType = mutationType === 'debit' ? 'expense' : 'income';
-      const potentialMatch = demoTransactions.find((tx) => {
-        if (tx.deletedAt !== null) return false;
-        if (tx.userId !== user.userId) return false;
-        if (tx.accountId !== connection.accountId) return false;
-        if (tx.type !== targetTxType) return false;
-        return tx.amount === amountRaw;
-      });
-
-      const mutationRecord: BankMutationModel = {
-        id: crypto.randomUUID(),
-        connectionId: connection.id,
-        externalId: extId,
-        amount: amountRaw,
-        type: mutationType,
-        description: desc,
-        transactionTime: new Date().toISOString(),
-        reconciliationStatus: potentialMatch ? 'matched' : 'pending',
-        matchedTransactionId: potentialMatch?.id ?? null,
-        createdAt: new Date().toISOString(),
-      };
-
-      demoBankMutations.unshift(mutationRecord);
-      importedMutations.push(mutationRecord);
-
-      if (potentialMatch) {
-        matchedCount.matched++;
-      } else {
-        matchedCount.pending++;
+  .get('/bank-mutations', async ({ query, user }) => successResponse(await db.select(getTableColumns(mutations))
+    .from(mutations).innerJoin(connections, eq(connections.id, mutations.connectionId))
+    .where(and(eq(connections.userId, user.userId), query.status ? eq(mutations.reconciliationStatus, query.status) : undefined,
+      query.connectionId ? eq(connections.id, query.connectionId) : undefined)).orderBy(desc(mutations.transactionTime))))
+  .post('/bank-connections/:id/import-statement', async ({ params, body, user }) => {
+    const input = importStatementSchema.parse(body);
+    const [conn] = await db.select({ id: connections.id, accountId: connections.accountId, zone: profiles.timezone })
+      .from(connections).innerJoin(profiles, eq(profiles.id, connections.userId))
+      .where(and(eq(connections.id, params.id), eq(connections.userId, user.userId)));
+    if (!conn || conn.id !== input.connectionId) throw new Error('RESOURCE_NOT_FOUND');
+    const imported = await db.transaction(async tx => {
+      await tx.select({ id: profiles.id }).from(profiles).where(eq(profiles.id,user.userId)).for('update');
+      const rows = [];
+      for (const r of parseBankStatement(conn.id, input.statementText)) {
+        const candidates = r.ambiguous ? [] : await tx.select({ id: transactions.id }).from(transactions).where(and(
+          eq(transactions.userId, user.userId), eq(transactions.accountId, conn.accountId), isNull(transactions.deletedAt),
+          eq(transactions.amount, r.amount), eq(transactions.type, r.type === 'credit' ? 'income' : 'expense'),
+          sql`not exists (select 1 from bank_mutations bm where bm.matched_transaction_id=${transactions.id} and bm.reconciliation_status in ('matched','created_as_new'))`,
+          sql`(${transactions.transactionDate} AT TIME ZONE ${conn.zone})::date = ${r.date}::date`)).limit(2);
+        const match = candidates.length === 1 ? candidates[0] : null;
+        const [row] = await tx.insert(mutations).values({ connectionId: conn.id, description: r.description, type: r.type,
+          externalId: createHash('sha256').update(r.externalId).digest('hex'), amount: r.amount,
+          transactionTime: sql`${r.date}::date::timestamp AT TIME ZONE ${conn.zone}`,
+          reconciliationStatus: match ? 'matched' : 'pending', matchedTransactionId: match?.id })
+          .onConflictDoNothing({ target: mutations.externalId }).returning();
+        if (row) rows.push(row);
       }
-
-      try {
-        await db.insert(schema.bankMutations).values({
-          id: mutationRecord.id,
-          connectionId: mutationRecord.connectionId,
-          externalId: mutationRecord.externalId,
-          amount: mutationRecord.amount,
-          type: mutationRecord.type,
-          description: mutationRecord.description,
-          transactionTime: new Date(mutationRecord.transactionTime),
-          reconciliationStatus: mutationRecord.reconciliationStatus,
-          matchedTransactionId: mutationRecord.matchedTransactionId,
-        });
-      } catch {}
-    }
-
-    connection.lastSyncedAt = new Date().toISOString();
-
-    return successResponse({
-      connectionId: connection.id,
-      totalImported: importedMutations.length,
-      autoMatchedCount: matchedCount.matched,
-      inboxPendingCount: matchedCount.pending,
-      mutations: importedMutations,
+      await tx.update(connections).set({ lastSyncedAt: new Date() }).where(eq(connections.id, conn.id));
+      return rows;
     });
+    const matched = imported.filter(r => r.matchedTransactionId).length;
+    return successResponse({ connectionId: conn.id, totalImported: imported.length, autoMatchedCount: matched,
+      inboxPendingCount: imported.length - matched, mutations: imported });
   })
-  .post('/bank-mutations/:id/reconcile', async ({ params, body, user, set }) => {
-    const mutation = demoBankMutations.find((m) => m.id === params.id);
-    if (!mutation) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
+  .post('/bank-mutations/:id/reconcile', async ({ params, body, user }) => {
     const input = reconcileMutationSchema.parse(body);
-
-    if (input.action === 'match') {
-      mutation.reconciliationStatus = 'matched';
-      mutation.matchedTransactionId = input.matchedTransactionId ?? null;
-    } else if (input.action === 'ignore') {
-      mutation.reconciliationStatus = 'ignored';
-    } else if (input.action === 'create_new') {
-      // Find associated account
-      const conn = demoBankConnections.find((c) => c.id === mutation.connectionId);
-      const accountId = conn?.accountId || 'a1000000-0000-0000-0000-000000000001';
-      const txType = mutation.type === 'debit' ? 'expense' : 'income';
-
-      const newTx = {
-        id: crypto.randomUUID(),
-        userId: user.userId,
-        accountId,
-        destinationAccountId: null,
-        categoryId: input.categoryId || 'c1000000-0000-0000-0000-000000000008',
-        pocketId: input.pocketId || null,
-        type: txType,
-        amount: mutation.amount,
-        transferFee: 0,
-        currency: 'IDR',
-        note: input.note || mutation.description,
-        receiptUrl: null,
-        transactionDate: mutation.transactionTime,
-        clientId: crypto.randomUUID(),
-        version: 1,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        deletedAt: null,
-      };
-
-      demoTransactions.unshift(newTx);
-      mutation.reconciliationStatus = 'created_as_new';
-      mutation.matchedTransactionId = newTx.id;
-
-      try {
-        await db.insert(schema.transactions).values({
-          id: newTx.id,
-          userId: user.userId,
-          accountId: newTx.accountId,
-          destinationAccountId: null,
-          categoryId: newTx.categoryId,
-          pocketId: newTx.pocketId,
-          type: newTx.type,
-          amount: newTx.amount,
-          transferFee: 0,
-          currency: 'IDR',
-          note: newTx.note,
-          transactionDate: new Date(newTx.transactionDate),
-          clientId: newTx.clientId,
-          version: 1,
-        });
-      } catch {}
-    }
-
-    try {
-      await db.update(schema.bankMutations).set({
-        reconciliationStatus: mutation.reconciliationStatus,
-        matchedTransactionId: mutation.matchedTransactionId,
-      }).where(eq(schema.bankMutations.id, mutation.id));
-    } catch {}
-
-    return successResponse({
-      id: mutation.id,
-      reconciliationStatus: mutation.reconciliationStatus,
-      matchedTransactionId: mutation.matchedTransactionId,
-    });
+    return successResponse(await db.transaction(async tx => {
+      await tx.select({ id: profiles.id }).from(profiles).where(eq(profiles.id,user.userId)).for('update');
+      const [row] = await tx.select({ m: mutations, accountId: connections.accountId }).from(mutations)
+        .innerJoin(connections, eq(connections.id, mutations.connectionId)).where(and(eq(mutations.id, params.id),
+          eq(connections.userId, user.userId))).for('update');
+      if (!row) throw new Error('RESOURCE_NOT_FOUND');
+      const { m, accountId } = row;
+      if (m.reconciliationStatus !== 'pending') {
+        if ((input.action === 'match' && m.reconciliationStatus === 'matched' && m.matchedTransactionId === input.matchedTransactionId) ||
+          (m.reconciliationStatus === 'ignored' && input.action === 'ignore') ||
+          (m.reconciliationStatus === 'created_as_new' && input.action === 'create_new')) return m;
+        throw new Error('SYNC_CONFLICT');
+      }
+      let matchedTransactionId: string | null = null;
+      if (input.action === 'match') {
+        const [match] = await tx.select({ id: transactions.id }).from(transactions).where(and(eq(transactions.id, input.matchedTransactionId),
+          eq(transactions.accountId, accountId), eq(transactions.userId, user.userId), isNull(transactions.deletedAt)));
+        if (!match) throw new Error('RESOURCE_NOT_FOUND');
+        const [existing] = await tx.select({id: mutations.id}).from(mutations)
+          .innerJoin(connections, eq(mutations.connectionId, connections.id))
+          .where(and(eq(connections.userId, user.userId), eq(mutations.matchedTransactionId, match.id),
+            inArray(mutations.reconciliationStatus, ['matched','created_as_new'])));
+        if (existing) throw new Error('SYNC_CONFLICT');
+        matchedTransactionId = match.id;
+      } else if (input.action === 'create_new') {
+        const categoryId = input.categoryId || (m.type === 'debit' ? 'c1000000-0000-0000-0000-000000000008' : 'c2000000-0000-0000-0000-000000000006');
+        const [category] = await tx.select({ id: categories.id }).from(categories).where(and(eq(categories.id, categoryId),
+          or(eq(categories.userId, user.userId), isNull(categories.userId))));
+        if (!category) throw new Error('RESOURCE_NOT_FOUND');
+        if (input.pocketId) {
+          const [p] = await tx.select({ id: pockets.id }).from(pockets).where(and(eq(pockets.id, input.pocketId),
+            eq(pockets.accountId, accountId), eq(pockets.userId, user.userId)));
+          if (!p) throw new Error('RESOURCE_NOT_FOUND');
+        }
+        const created = await createEntry(tx,user.userId,{ accountId, categoryId, currency: 'IDR',
+          pocketId: input.pocketId, type: m.type === 'debit' ? 'expense' : 'income', amount: m.amount,
+          transactionDate: m.transactionTime.toISOString(), note: input.note || m.description, clientId: crypto.randomUUID() });
+        matchedTransactionId = created.id;
+      }
+      const [updated] = await tx.update(mutations).set({ matchedTransactionId,
+        reconciliationStatus: input.action === 'ignore' ? 'ignored' : input.action === 'match' ? 'matched' : 'created_as_new' })
+        .where(eq(mutations.id, m.id)).returning();
+      return updated;
+    }));
   });

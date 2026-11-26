@@ -134,6 +134,7 @@ export interface TransactionModel {
   destinationAccountId: string | null;
   categoryId: string | null;
   pocketId?: string | null;
+  pocketDebit?: number | null;
   type: TransactionType;
   amount: number;
   transferFee: number;

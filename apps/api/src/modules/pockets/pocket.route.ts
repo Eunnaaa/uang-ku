@@ -1,461 +1,136 @@
+import { randomBytes } from 'node:crypto';
 import { Elysia } from 'elysia';
-import {
-  createPocketSchema,
-  updatePocketSchema,
-  pocketTransferSchema,
-  joinPocketSchema,
-  pocketContributionSchema,
-  addPocketMemberSchema,
-  type PocketModel,
-  type PocketMemberModel,
-  type PocketContributionModel,
-} from '@uangku/contracts';
+import { and, desc, eq, gt, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { createPocketSchema, updatePocketSchema, pocketTransferSchema, joinPocketSchema,
+  pocketContributionSchema, addPocketMemberSchema } from '@uangku/contracts';
 import { authMiddleware } from '../../middleware/auth';
-import { successResponse, errorHandler } from '../../middleware/error-handler';
+import { successResponse } from '../../middleware/error-handler';
 import { db, schema } from '../../db/client';
-import { eq, and, sql } from 'drizzle-orm';
+import type { Tx } from '../../db/ledger';
 
-// In-memory fallback stores for rapid unit tests & offline running
-export const demoPocketMembers: PocketMemberModel[] = [];
-
-export const demoPocketContributions: PocketContributionModel[] = [];
-
-export const demoPockets: PocketModel[] = [];
-
-function generateInviteCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = 'PKT-';
-  for (let i = 0; i < 5; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return code;
+const { accounts, pockets: p, pocketMembers: m, pocketContributions: c } = schema;
+const invite = () => randomBytes(10).toString('hex').toUpperCase();
+async function owned(tx: Tx, id: string, owner: string) {
+  const [row] = await tx.select().from(p).where(and(eq(p.id, id), eq(p.userId, owner))).for('update');
+  if (!row) throw new Error('RESOURCE_NOT_FOUND');
+  return row;
 }
-
-export const pocketRoutes = new Elysia({ prefix: '/api/v1' })
-  .use(errorHandler)
-  .use(authMiddleware)
+async function share(tx: Tx, pocket: typeof p.$inferSelect) {
+  const [row] = await tx.update(p).set({ isShared: true, inviteCode: invite(), inviteExpiresAt: new Date(Date.now()+86400000), updatedAt: new Date() })
+    .where(eq(p.id, pocket.id)).returning();
+  const members = await tx.select().from(m).where(and(eq(m.pocketId, row.id), isNull(m.revokedAt)));
+  if (!members.some(x => x.userId === row.userId && x.role === 'owner')) {
+    const [owner] = await tx.insert(m).values({ pocketId: row.id, userId: row.userId, name: 'Saya (Pembuat)',
+      role: 'owner', totalContributed: row.allocatedBalance }).returning();
+    members.push(owner);
+    if (row.allocatedBalance) await tx.insert(c).values({ pocketId: row.id, memberId: owner.id,
+      memberName: owner.name, amount: row.allocatedBalance, note: 'Alokasi awal' });
+  }
+  return { pocket: row, inviteCode: row.inviteCode, members };
+}
+async function access(tx: Tx, id: string, userId: string) {
+  const [pocket] = await tx.select().from(p).where(eq(p.id, id)).for('update');
+  if (!pocket) throw new Error('RESOURCE_NOT_FOUND');
+  const [member] = await tx.select().from(m).where(and(eq(m.pocketId, id), eq(m.userId, userId), isNull(m.revokedAt)));
+  if (pocket.userId !== userId && !(pocket.isShared && member)) throw new Error('RESOURCE_NOT_FOUND');
+  return { pocket, member, owner: pocket.userId === userId };
+}
+export const pocketRoutes = new Elysia({ prefix: '/api/v1' }).use(authMiddleware)
   .get('/accounts/:accountId/pockets', async ({ params, user }) => {
-    const list = demoPockets
-      .filter((p) => p.accountId === params.accountId && p.userId === user.userId)
-      .map((p) => {
-        const members = demoPocketMembers.filter((m) => m.pocketId === p.id);
-        const contributions = demoPocketContributions.filter((c) => c.pocketId === p.id);
-        return {
-          ...p,
-          membersCount: members.length,
-          members,
-          contributions: contributions.slice(0, 10),
-        };
-      });
-
-    const totalAllocated = list.reduce((sum, p) => sum + p.allocatedBalance, 0);
-
-    return successResponse({
-      pockets: list,
-      totalAllocated,
-    });
+    const rows = await db.select().from(p).where(and(eq(p.accountId, params.accountId), eq(p.userId, user.userId)));
+    const ids = rows.map(r => r.id);
+    const [members, contributions] = await Promise.all([db.select().from(m).where(and(inArray(m.pocketId, ids), isNull(m.revokedAt))),
+      db.select().from(c).where(inArray(c.pocketId, ids)).orderBy(desc(c.createdAt))]);
+    return successResponse({ pockets: rows.map(row => { const group = members.filter(x => x.pocketId === row.id);
+      return { ...row, members: group, membersCount: group.length, contributions: contributions.filter(x => x.pocketId === row.id).slice(0,10) }; }),
+      totalAllocated: rows.reduce((n,r) => n+r.allocatedBalance,0) });
   })
   .post('/accounts/:accountId/pockets', async ({ params, body, user }) => {
     const input = createPocketSchema.parse(body);
-
-    const isShared = Boolean(input.isShared || input.type === 'shared');
-    const inviteCode = isShared ? (input.inviteCode || generateInviteCode()) : null;
-
-    const newPocket: PocketModel = {
-      id: crypto.randomUUID(),
-      userId: user.userId,
-      accountId: params.accountId,
-      name: input.name,
-      emoji: input.emoji ?? (isShared ? 'users' : 'wallet'),
-      type: input.type,
-      allocatedBalance: input.initialAllocation ?? 0,
-      targetAmount: input.targetAmount ?? null,
-      isLocked: input.type === 'locked',
-      sortOrder: input.sortOrder ?? 0,
-      isShared,
-      inviteCode,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    demoPockets.unshift(newPocket);
-
-    if (isShared) {
-      const ownerMember: PocketMemberModel = {
-        id: crypto.randomUUID(),
-        pocketId: newPocket.id,
-        userId: user.userId,
-        name: 'Saya (Pembuat)',
-        avatarEmoji: 'crown',
-        role: 'owner',
-        totalContributed: newPocket.allocatedBalance,
-        joinedAt: newPocket.createdAt,
-      };
-      demoPocketMembers.push(ownerMember);
-
-      if (newPocket.allocatedBalance > 0) {
-        demoPocketContributions.unshift({
-          id: crypto.randomUUID(),
-          pocketId: newPocket.id,
-          memberId: ownerMember.id,
-          memberName: ownerMember.name,
-          memberAvatar: ownerMember.avatarEmoji,
-          amount: newPocket.allocatedBalance,
-          note: 'Setoran modal awal',
-          createdAt: newPocket.createdAt,
-        });
-      }
-    }
-
-    try {
-      await db.insert(schema.pockets).values({
-        id: newPocket.id,
-        userId: user.userId,
-        accountId: params.accountId,
-        name: newPocket.name,
-        emoji: newPocket.emoji,
-        type: newPocket.type,
-        allocatedBalance: newPocket.allocatedBalance,
-        targetAmount: newPocket.targetAmount,
-        isLocked: newPocket.isLocked,
-        sortOrder: newPocket.sortOrder,
-        isShared: newPocket.isShared || false,
-        inviteCode: newPocket.inviteCode || null,
-      });
-    } catch {}
-
-    return successResponse(newPocket);
+    return successResponse(await db.transaction(async tx => {
+      if (!(await tx.select({ id: accounts.id }).from(accounts).where(and(eq(accounts.id, params.accountId), eq(accounts.userId, user.userId))))[0]) throw new Error('RESOURCE_NOT_FOUND');
+      const [row] = await tx.insert(p).values({ accountId: params.accountId, userId: user.userId, name: input.name,
+        type: input.type, emoji: input.emoji, allocatedBalance: input.initialAllocation, targetAmount: input.targetAmount,
+        sortOrder: input.sortOrder, isLocked: input.type === 'locked' }).returning();
+      return input.isShared || input.type === 'shared' ? (await share(tx,row)).pocket : row;
+    }));
   })
   .patch('/pockets/:id', async ({ params, body, user }) => {
     const input = updatePocketSchema.parse(body);
-    const pocket = demoPockets.find((p) => p.id === params.id && p.userId === user.userId);
-    if (!pocket) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    if (input.name !== undefined) pocket.name = input.name;
-    if (input.emoji !== undefined) pocket.emoji = input.emoji;
-    if (input.type !== undefined) {
-      pocket.type = input.type;
-      if (input.type === 'locked') pocket.isLocked = true;
-    }
-    if (input.targetAmount !== undefined) pocket.targetAmount = input.targetAmount;
-    if (input.isLocked !== undefined) pocket.isLocked = input.isLocked;
-    if (input.sortOrder !== undefined) pocket.sortOrder = input.sortOrder;
-    if (input.isShared !== undefined) {
-      pocket.isShared = input.isShared;
-      if (input.isShared && !pocket.inviteCode) {
-        pocket.inviteCode = generateInviteCode();
-      }
-    }
-    pocket.updatedAt = new Date().toISOString();
-
-    try {
-      await db.update(schema.pockets).set({
-        name: pocket.name,
-        emoji: pocket.emoji,
-        type: pocket.type,
-        targetAmount: pocket.targetAmount,
-        isLocked: pocket.isLocked,
-        sortOrder: pocket.sortOrder,
-        isShared: pocket.isShared || false,
-        inviteCode: pocket.inviteCode,
-        updatedAt: new Date(pocket.updatedAt),
-      }).where(eq(schema.pockets.id, pocket.id));
-    } catch {}
-
-    return successResponse(pocket);
+    return successResponse(await db.transaction(async tx => {
+      await owned(tx,params.id,user.userId);
+      const [row] = await tx.update(p).set({ ...input, ...(input.type === 'locked' && { isLocked: true }),
+        ...(input.isShared === false && { inviteCode: null, inviteExpiresAt: null }), updatedAt: new Date() }).where(eq(p.id,params.id)).returning();
+      return input.isShared ? (await share(tx,row)).pocket : row;
+    }));
   })
   .delete('/pockets/:id', async ({ params, user }) => {
-    const index = demoPockets.findIndex((p) => p.id === params.id && p.userId === user.userId);
-    if (index === -1) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    const removed = demoPockets[index];
-    demoPockets.splice(index, 1);
-
-    try {
-      await db.delete(schema.pockets).where(eq(schema.pockets.id, params.id));
-    } catch {}
-
-    return successResponse({ id: params.id, freedBalance: removed.allocatedBalance, deleted: true });
+    const [row] = await db.delete(p).where(and(eq(p.id, params.id),eq(p.userId,user.userId))).returning();
+    if (!row) throw new Error('RESOURCE_NOT_FOUND');
+    return successResponse({ id: row.id, freedBalance: row.allocatedBalance, deleted: true });
   })
-  .post('/pockets/transfer', async ({ body, user, set }) => {
+  .post('/pockets/transfer', async ({ body, user }) => {
     const input = pocketTransferSchema.parse(body);
-
-    const sourcePocket = input.sourcePocketId
-      ? demoPockets.find((p) => p.id === input.sourcePocketId && p.userId === user.userId && p.accountId === input.accountId)
-      : null;
-
-    const destPocket = input.destinationPocketId
-      ? demoPockets.find((p) => p.id === input.destinationPocketId && p.userId === user.userId && p.accountId === input.accountId)
-      : null;
-
-    if (input.sourcePocketId && !sourcePocket) {
-      set.status = 404;
-      return { success: false, error: { code: 'RESOURCE_NOT_FOUND', message: 'Kantong sumber tidak ditemukan' } };
-    }
-    if (input.destinationPocketId && !destPocket) {
-      set.status = 404;
-      return { success: false, error: { code: 'RESOURCE_NOT_FOUND', message: 'Kantong tujuan tidak ditemukan' } };
-    }
-
-    if (sourcePocket) {
-      if (sourcePocket.allocatedBalance < input.amount) {
-        set.status = 400;
-        return {
-          success: false,
-          error: { code: 'VALIDATION_ERROR', message: 'Saldo kantong sumber tidak mencukupi untuk transfer' },
-        };
+    return successResponse(await db.transaction(async tx => {
+      let sourcePocket = null, destinationPocket = null;
+      for (const id of [input.sourcePocketId,input.destinationPocketId].filter((id): id is string => !!id).sort()) {
+        const row = await owned(tx,id,user.userId);
+        if (row.accountId !== input.accountId) throw new Error('RESOURCE_NOT_FOUND');
+        const balance = row.allocatedBalance + (id === input.sourcePocketId ? -input.amount : input.amount);
+        if (balance < 0) throw new Error('SYNC_CONFLICT');
+        const [updated] = await tx.update(p).set({ allocatedBalance: balance, updatedAt: new Date() }).where(eq(p.id,id)).returning();
+        if (id === input.sourcePocketId) sourcePocket = updated; else destinationPocket = updated;
       }
-      sourcePocket.allocatedBalance -= input.amount;
-      sourcePocket.updatedAt = new Date().toISOString();
-
-      try {
-        await db.update(schema.pockets).set({
-          allocatedBalance: sourcePocket.allocatedBalance,
-          updatedAt: new Date(sourcePocket.updatedAt),
-        }).where(eq(schema.pockets.id, sourcePocket.id));
-      } catch {}
-    }
-
-    if (destPocket) {
-      destPocket.allocatedBalance += input.amount;
-      destPocket.updatedAt = new Date().toISOString();
-
-      try {
-        await db.update(schema.pockets).set({
-          allocatedBalance: destPocket.allocatedBalance,
-          updatedAt: new Date(destPocket.updatedAt),
-        }).where(eq(schema.pockets.id, destPocket.id));
-      } catch {}
-    }
-
-    return successResponse({
-      message: 'Transfer alokasi antar kantong berhasil',
-      sourcePocket,
-      destinationPocket: destPocket,
-      transferredAmount: input.amount,
-    });
+      return { sourcePocket, destinationPocket, transferredAmount: input.amount };
+    }));
   })
-  // ==========================================
-  // SHARED POCKET SPECIFIC ENDPOINTS
-  // ==========================================
-  .post('/pockets/:id/share', async ({ params, user }) => {
-    const pocket = demoPockets.find((p) => p.id === params.id && p.userId === user.userId);
-    if (!pocket) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    pocket.isShared = true;
-    if (!pocket.inviteCode) {
-      pocket.inviteCode = generateInviteCode();
-    }
-    pocket.updatedAt = new Date().toISOString();
-
-    // Check if owner member exists
-    let owner = demoPocketMembers.find((m) => m.pocketId === pocket.id && m.role === 'owner');
-    if (!owner) {
-      owner = {
-        id: crypto.randomUUID(),
-        pocketId: pocket.id,
-        userId: user.userId,
-        name: 'Saya (Pembuat)',
-        avatarEmoji: 'crown',
-        role: 'owner',
-        totalContributed: pocket.allocatedBalance,
-        joinedAt: new Date().toISOString(),
-      };
-      demoPocketMembers.push(owner);
-    }
-
-    try {
-      await db.update(schema.pockets).set({
-        isShared: true,
-        inviteCode: pocket.inviteCode,
-        updatedAt: new Date(pocket.updatedAt),
-      }).where(eq(schema.pockets.id, pocket.id));
-    } catch {}
-
-    const members = demoPocketMembers.filter((m) => m.pocketId === pocket.id);
-    return successResponse({
-      pocket,
-      inviteCode: pocket.inviteCode,
-      members,
-    });
-  })
-  .post('/pockets/join', async ({ body, set }) => {
+  .post('/pockets/:id/share', async ({ params, user }) => successResponse(await db.transaction(async tx => share(tx,await owned(tx,params.id,user.userId)))))
+  .post('/pockets/join', async ({ body, user }) => {
     const input = joinPocketSchema.parse(body);
-
-    const pocket = demoPockets.find(
-      (p) => p.isShared && p.inviteCode?.toUpperCase() === input.inviteCode.toUpperCase()
-    );
-
-    if (!pocket) {
-      set.status = 404;
-      return {
-        success: false,
-        error: { code: 'RESOURCE_NOT_FOUND', message: 'Kode undangan kantong bersama tidak ditemukan atau tidak aktif' },
-      };
-    }
-
-    const newMember: PocketMemberModel = {
-      id: crypto.randomUUID(),
-      pocketId: pocket.id,
-      name: input.memberName,
-      avatarEmoji: input.avatarEmoji || 'user',
-      role: 'contributor',
-      totalContributed: 0,
-      joinedAt: new Date().toISOString(),
-    };
-
-    demoPocketMembers.push(newMember);
-
-    try {
-      await db.insert(schema.pocketMembers).values({
-        id: newMember.id,
-        pocketId: pocket.id,
-        name: newMember.name,
-        avatarEmoji: newMember.avatarEmoji,
-        role: newMember.role,
-        totalContributed: 0,
-      });
-    } catch {}
-
-    return successResponse({
-      message: `Berhasil bergabung ke Kantong Bersama "${pocket.name}"`,
-      pocket,
-      member: newMember,
-    });
+    return successResponse(await db.transaction(async tx => {
+      const rows = await tx.select().from(p).where(and(eq(p.isShared,true),eq(p.inviteCode,input.inviteCode.toUpperCase()),
+        gt(p.inviteExpiresAt, sql`now()`))).limit(2).for('update');
+      if (rows.length !== 1) throw new Error('RESOURCE_NOT_FOUND');
+      const pocket = rows[0];
+      let [member] = await tx.select().from(m).where(and(eq(m.userId,user.userId),eq(m.pocketId,pocket.id),isNull(m.revokedAt)));
+      if (!member) [member] = await tx.insert(m).values({ pocketId: pocket.id,userId: user.userId,name: input.memberName,avatarEmoji: input.avatarEmoji }).returning();
+      await tx.update(p).set({ inviteCode: null, inviteExpiresAt: null }).where(eq(p.id,pocket.id));
+      return { pocket: { ...pocket, inviteCode: null, inviteExpiresAt: null }, member };
+    }));
   })
-  .post('/pockets/:id/members', async ({ params, body }) => {
-    const pocket = demoPockets.find((p) => p.id === params.id);
-    if (!pocket) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
+  .post('/pockets/:id/members', async ({ params, body, user }) => {
     const input = addPocketMemberSchema.parse(body);
-    const newMember: PocketMemberModel = {
-      id: crypto.randomUUID(),
-      pocketId: pocket.id,
-      name: input.name,
-      avatarEmoji: input.avatarEmoji || 'user',
-      role: input.role || 'contributor',
-      totalContributed: 0,
-      joinedAt: new Date().toISOString(),
-    };
-
-    demoPocketMembers.push(newMember);
-
-    try {
-      await db.insert(schema.pocketMembers).values({
-        id: newMember.id,
-        pocketId: pocket.id,
-        name: newMember.name,
-        avatarEmoji: newMember.avatarEmoji,
-        role: newMember.role,
-        totalContributed: 0,
-      });
-    } catch {}
-
-    return successResponse(newMember);
+    if (input.role === 'owner') throw new Error('FORBIDDEN');
+    return successResponse(await db.transaction(async tx => {
+      await owned(tx, params.id, user.userId);
+      return (await tx.insert(m).values({ ...input, pocketId: params.id }).returning())[0];
+    }));
   })
-  .delete('/pockets/:id/members/:memberId', async ({ params, user }) => {
-    const pocket = demoPockets.find((p) => p.id === params.id && p.userId === user.userId);
-    if (!pocket) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    const index = demoPocketMembers.findIndex(
-      (m) => m.pocketId === params.id && m.id === params.memberId
-    );
-    if (index === -1) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    const removed = demoPocketMembers[index];
-    if (removed.role === 'owner') {
-      throw new Error('Owner tidak dapat dihapus dari Kantong Bersama');
-    }
-
-    demoPocketMembers.splice(index, 1);
-
-    try {
-      await db.delete(schema.pocketMembers).where(eq(schema.pocketMembers.id, params.memberId));
-    } catch {}
-
-    return successResponse({ memberId: params.memberId, removed: true });
-  })
-  .post('/pockets/:id/contribute', async ({ params, body, set }) => {
+  .delete('/pockets/:id/members/:memberId', async ({ params, user }) => successResponse(await db.transaction(async tx => {
+    await owned(tx,params.id,user.userId);
+    const [row] = await tx.update(m).set({ revokedAt: new Date() })
+      .where(and(eq(m.id,params.memberId),eq(m.pocketId,params.id),ne(m.role,'owner'),isNull(m.revokedAt))).returning();
+    if (!row) throw new Error('RESOURCE_NOT_FOUND');
+    await tx.update(p).set({ inviteCode: null, inviteExpiresAt: null }).where(eq(p.id,params.id));
+    return { memberId: row.id, removed: true };
+  })))
+  .post('/pockets/:id/contribute', async ({ params, body, user }) => {
     const input = pocketContributionSchema.parse(body);
-    const pocket = demoPockets.find((p) => p.id === params.id);
-    if (!pocket) {
-      set.status = 404;
-      return { success: false, error: { code: 'RESOURCE_NOT_FOUND', message: 'Kantong tidak ditemukan' } };
-    }
-
-    let member = input.memberId
-      ? demoPocketMembers.find((m) => m.id === input.memberId && m.pocketId === pocket.id)
-      : demoPocketMembers.find((m) => m.name.toLowerCase() === input.memberName.toLowerCase() && m.pocketId === pocket.id);
-
-    if (!member) {
-      member = {
-        id: crypto.randomUUID(),
-        pocketId: pocket.id,
-        name: input.memberName,
-        avatarEmoji: input.memberAvatar || 'user',
-        role: 'contributor',
-        totalContributed: 0,
-        joinedAt: new Date().toISOString(),
-      };
-      demoPocketMembers.push(member);
-    }
-
-    member.totalContributed += input.amount;
-    pocket.allocatedBalance += input.amount;
-    pocket.updatedAt = new Date().toISOString();
-
-    const contribution: PocketContributionModel = {
-      id: crypto.randomUUID(),
-      pocketId: pocket.id,
-      memberId: member.id,
-      memberName: member.name,
-      memberAvatar: member.avatarEmoji,
-      amount: input.amount,
-      note: input.note || null,
-      createdAt: new Date().toISOString(),
-    };
-    demoPocketContributions.unshift(contribution);
-
-    try {
-      await db.update(schema.pockets).set({
-        allocatedBalance: pocket.allocatedBalance,
-        updatedAt: new Date(pocket.updatedAt),
-      }).where(eq(schema.pockets.id, pocket.id));
-
-      await db.insert(schema.pocketContributions).values({
-        id: contribution.id,
-        pocketId: pocket.id,
-        memberId: member.id,
-        memberName: member.name,
-        memberAvatar: member.avatarEmoji,
-        amount: contribution.amount,
-        note: contribution.note,
-      });
-    } catch {}
-
-    return successResponse({
-      message: `Setoran Rp ${input.amount.toLocaleString('id-ID')} berhasil dicatat`,
-      pocket,
-      member,
-      contribution,
-    });
+    return successResponse(await db.transaction(async tx => {
+      const auth = await access(tx,params.id,user.userId);
+      if (!auth.owner && (auth.member.role !== 'contributor' || (input.memberId && input.memberId !== auth.member.id))) throw new Error('FORBIDDEN');
+      let member = auth.member;
+      if (auth.owner && input.memberId) [member] = await tx.select().from(m).where(and(eq(m.id,input.memberId),eq(m.pocketId,params.id),isNull(m.revokedAt)));
+      if (!member) throw new Error('RESOURCE_NOT_FOUND');
+      [member] = await tx.update(m).set({ totalContributed: sql`${m.totalContributed}+${input.amount}` }).where(eq(m.id,member.id)).returning();
+      const [pocket] = await tx.update(p).set({ allocatedBalance: sql`${p.allocatedBalance}+${input.amount}`,updatedAt: new Date() }).where(eq(p.id,params.id)).returning();
+      const [contribution] = await tx.insert(c).values({ pocketId: params.id,memberId: member.id,memberName: member.name,
+        memberAvatar: member.avatarEmoji,amount: input.amount,note: input.note }).returning();
+      return { pocket: auth.owner ? pocket : { ...pocket, inviteCode: null, inviteExpiresAt: null },member,contribution };
+    }));
   })
-  .get('/pockets/:id/contributions', async ({ params }) => {
-    const list = demoPocketContributions.filter((c) => c.pocketId === params.id);
-    return successResponse({
-      contributions: list,
-      totalContributions: list.reduce((sum, c) => sum + c.amount, 0),
-    });
-  });
+  .get('/pockets/:id/contributions', async ({ params, user }) => successResponse(await db.transaction(async tx => {
+    await access(tx,params.id,user.userId);
+    const contributions = await tx.select().from(c).where(eq(c.pocketId,params.id)).orderBy(desc(c.createdAt));
+    return { contributions,totalContributions: contributions.reduce((n,r) => n+r.amount,0) };
+  })));

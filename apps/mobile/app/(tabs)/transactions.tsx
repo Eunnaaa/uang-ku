@@ -31,6 +31,8 @@ import {
 } from '../../src/db/sqlite';
 import { hapticSelection, hapticLight, hapticMedium, hapticSuccess } from '../../src/theme/haptics';
 import { useToast } from '../../src/components/Toast';
+import { receiptSource } from '../../src/services/storageService';
+import { useAuth } from '../../src/auth/authContext';
 
 function groupTransactionsByDate(items: TransactionModel[]) {
   const groups: { dateKey: string; label: string; items: TransactionModel[]; dailyNet: number }[] = [];
@@ -83,6 +85,7 @@ function groupTransactionsByDate(items: TransactionModel[]) {
 }
 
 export default function TransactionsScreen() {
+  const { token } = useAuth();
   const router = useRouter();
   const toast = useToast();
   const { colors, isDark } = useTheme();
@@ -819,7 +822,7 @@ export default function TransactionsScreen() {
                     onPress={() => setIsReceiptFullscreenOpen(true)}
                   >
                     <Image
-                      source={{ uri: selectedTx.receiptUrl }}
+                      source={receiptSource(selectedTx.receiptUrl, token)}
                       style={styles.detailReceiptImage}
                       resizeMode="cover"
                     />
@@ -898,7 +901,7 @@ export default function TransactionsScreen() {
               </View>
               <View style={styles.fullReceiptImageContainer}>
                 <Image
-                  source={{ uri: selectedTx.receiptUrl }}
+                  source={receiptSource(selectedTx.receiptUrl, token)}
                   style={styles.fullReceiptImage}
                   resizeMode="contain"
                 />

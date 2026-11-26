@@ -44,8 +44,8 @@ import {
   FolderUp,
 } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
-import * as Sharing from 'expo-sharing';
-import * as FileSystem from 'expo-file-system/legacy';
+import { shareExport } from '../../src/services/exportFiles';
+import { readPickedBackup } from '../../src/services/importFile';
 import * as DocumentPicker from 'expo-document-picker';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
@@ -61,6 +61,7 @@ import { useTheme } from '../../src/theme/themeContext';
 import { SyncEngine } from '../../src/sync/syncEngine';
 import {
   getLocalTransactions,
+  getActiveUserId,
   getDb,
   getLocalAccounts,
   getLocalCategories,
@@ -92,6 +93,9 @@ export default function SettingsScreen() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [deletePrompt, setDeletePrompt] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleting, setDeleting] = useState(false);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [isPrivacyModalOpen, setIsPrivacyModalOpen] = useState(false);
 
@@ -119,7 +123,7 @@ export default function SettingsScreen() {
         getLocalCategories(),
         getLocalRecurringRules(),
         db.getFirstAsync<{ count: number }>(
-          `SELECT count(*) as count FROM mutation_outbox WHERE status = 'pending';`
+          `SELECT count(*) as count FROM mutation_outbox WHERE entity_id IN (SELECT id FROM local_transactions WHERE user_id=?)`, [user?.id ?? '']
         ),
       ]);
       setAccounts(accs);
@@ -129,7 +133,7 @@ export default function SettingsScreen() {
     } catch (err) {
       console.error('Failed to load settings data:', err);
     }
-  }, []);
+  }, [user?.id]);
 
   useEffect(() => {
     loadData();
@@ -153,7 +157,9 @@ export default function SettingsScreen() {
       const res = await SyncEngine.syncAll();
       await loadData();
 
-      if (res.pushed > 0 || res.pulled > 0) {
+      if (res.errors) {
+        toast.showWarning('Sinkronisasi belum selesai', 'Sebagian data belum terkonfirmasi. Periksa koneksi dan status transaksi.');
+      } else if (res.pushed > 0 || res.pulled > 0) {
         toast.showSuccess(
           'Sinkronisasi Sukses',
           `${res.pushed} terkirim, ${res.pulled} data terbaru ditarik.`
@@ -161,7 +167,7 @@ export default function SettingsScreen() {
       } else {
         toast.showInfo(
           'Sinkronisasi Lengkap',
-          'Seluruh transaksi telah sinkron sempurna dengan server.'
+          'Dompet, kategori, dan transaksi sudah diperiksa. Simpan cadangan untuk data lain.'
         );
       }
     } catch {
@@ -234,6 +240,7 @@ export default function SettingsScreen() {
 
   const handleExportCsv = async () => {
     hapticMedium();
+    const owner = getActiveUserId();
     try {
       const txs = await getLocalTransactions();
       if (txs.length === 0) {
@@ -241,22 +248,7 @@ export default function SettingsScreen() {
         return;
       }
 
-      const csvContent = generateTransactionsCsv(txs);
-      const fileUri = `${FileSystem.cacheDirectory}UangKu_Export_${new Date().toISOString().slice(0, 10)}.csv`;
-
-      await FileSystem.writeAsStringAsync(fileUri, csvContent, {
-        encoding: FileSystem.EncodingType.UTF8,
-      });
-
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(fileUri, {
-          mimeType: 'text/csv',
-          dialogTitle: 'Ekspor Data Transaksi UangKu',
-          UTI: 'public.comma-separated-values-text',
-        });
-      } else {
-        Alert.alert('Sukses', `Berkas tersimpan di: ${fileUri}`);
-      }
+      await shareExport(owner, generateTransactionsCsv(txs));
     } catch (err: any) {
       Alert.alert('Gagal Ekspor', err.message);
     }
@@ -264,24 +256,10 @@ export default function SettingsScreen() {
 
   const handleExportBackup = async () => {
     hapticMedium();
+    const owner = getActiveUserId();
     try {
       const backupJson = await exportFullLocalBackup();
-      const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const fileUri = `${FileSystem.cacheDirectory}UangKu_Backup_${dateStr}.ukbak`;
-
-      await FileSystem.writeAsStringAsync(fileUri, backupJson, {
-        encoding: FileSystem.EncodingType.UTF8,
-      });
-
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(fileUri, {
-          mimeType: 'application/json',
-          dialogTitle: 'Simpan Cadangan Data UangKu (.ukbak)',
-          UTI: 'public.json',
-        });
-      } else {
-        Alert.alert('Cadangan Berhasil', `Berkas cadangan tersimpan di: ${fileUri}`);
-      }
+      await shareExport(owner, backupJson, true);
     } catch (err: any) {
       Alert.alert('Gagal Membuat Cadangan', err.message);
     }
@@ -289,6 +267,7 @@ export default function SettingsScreen() {
 
   const handleRestoreBackup = async () => {
     hapticLight();
+    const owner = getActiveUserId();
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: ['*/*'],
@@ -298,9 +277,8 @@ export default function SettingsScreen() {
       if (result.canceled || !result.assets || result.assets.length === 0) return;
 
       const fileAsset = result.assets[0];
-      const content = await FileSystem.readAsStringAsync(fileAsset.uri, {
-        encoding: FileSystem.EncodingType.UTF8,
-      });
+      const content = await readPickedBackup(fileAsset.uri);
+      if (getActiveUserId() !== owner) return;
 
       Alert.alert(
         'Konfirmasi Pemulihan Data',
@@ -312,6 +290,7 @@ export default function SettingsScreen() {
             style: 'destructive',
             onPress: async () => {
               try {
+                if (getActiveUserId() !== owner) return;
                 hapticSuccess();
                 const res = await restoreFullLocalBackup(content);
                 if (res.success) {
@@ -352,11 +331,11 @@ export default function SettingsScreen() {
         await loadData();
         Alert.alert(
           'Impor Berhasil',
-          `Sebanyak ${res.success} transaksi berhasil diimpor ke basis data lokal.${res.failed > 0 ? ` (${res.failed} baris dilewati karena format tidak valid)` : ''}`
+          `${res.success} transaksi diimpor.${res.failed ? ` ${res.failed} ditolak. ${res.firstError}` : ''}`
         );
       } else {
         hapticError();
-        Alert.alert('Gagal Mengimpor', 'Tidak ada baris data valid yang dapat diimpor. Pastikan format berisi Tanggal dan Nominal.');
+        Alert.alert('Gagal Mengimpor', res.firstError || 'Tidak ada baris transaksi.');
       }
     } catch (err: any) {
       setIsImporting(false);
@@ -401,8 +380,22 @@ export default function SettingsScreen() {
     );
   };
 
+  const closeDelete = () => { setDeletePassword(''); setDeletePrompt(false); };
+  const confirmDelete = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      const ok = await deleteAccount(deletePassword);
+      setDeletePassword('');
+      if (ok) {
+        setDeletePrompt(false);
+        Alert.alert('Akun dihapus', 'Data akun ini telah dihapus.');
+      }
+    } finally { setDeleting(false); }
+  };
   const handleDeleteAccount = () => {
     hapticLight();
+    if (!isGuest) { setDeletePrompt(true); return; }
     Alert.alert(
       'Hapus Akun & Semua Data',
       'Tindakan ini permanen dan tidak dapat dibatalkan sesuai pedoman privasi Apple App Store. Seluruh transaksi dan saldo lokalmu akan dimusnahkan. Yakin ingin melanjutkan?',
@@ -414,7 +407,7 @@ export default function SettingsScreen() {
           onPress: async () => {
             const ok = await deleteAccount();
             if (ok) {
-              Alert.alert('Akun Dihapus', 'Seluruh data lokal dan cloud telah dibersihkan secara tuntas.');
+              Alert.alert('Akun Dihapus', isGuest ? 'Data tamu di perangkat ini telah dihapus.' : 'Server mengonfirmasi penghapusan akun. Data lokal akun ini juga telah dihapus.');
               await loadData();
               setIsAuthModalOpen(true);
             }
@@ -428,14 +421,14 @@ export default function SettingsScreen() {
     hapticLight();
     const db = await getDb();
     const pending = await db.getFirstAsync<{ count: number }>(
-      `SELECT count(*) as count FROM mutation_outbox WHERE status = 'pending';`
+      `SELECT count(*) as count FROM mutation_outbox WHERE entity_id IN (SELECT id FROM local_transactions WHERE user_id=?)`, [user?.id ?? '']
     );
     const pendingCount = pending?.count || 0;
 
     const performLogout = async () => {
       hapticSuccess();
-      await logout();
-      Alert.alert('Berhasil Keluar', 'Sesi login telah diakhiri.');
+      const confirmed = await logout();
+      Alert.alert('Keluar dari perangkat', confirmed ? 'Sesi telah diakhiri.' : 'Pencabutan di server belum terkonfirmasi. Sesi server akan kedaluwarsa.');
       setIsAuthModalOpen(true);
     };
 
@@ -712,11 +705,11 @@ export default function SettingsScreen() {
                 <RefreshCw size={16} color={colors.gold.champagne} />
               </View>
               <View>
-                <Text style={styles.menuLabel}>Sinkronisasi Cloud Outbox</Text>
+                <Text style={styles.menuLabel}>Sinkronkan dompet, kategori, dan transaksi</Text>
                 <Text style={styles.menuSublabel}>
                   {pendingSyncCount > 0
                     ? `${pendingSyncCount} mutasi menunggu sinkronisasi`
-                    : 'Semua mutasi telah tersinkron'}
+                    : 'Antrean transaksi kosong'}
                 </Text>
               </View>
             </View>
@@ -858,7 +851,7 @@ export default function SettingsScreen() {
               </View>
               <View>
                 <Text style={styles.menuLabel}>Buat Cadangan Lengkap (.ukbak)</Text>
-                <Text style={styles.menuSublabel}>Simpan seluruh data transaksi & alokasi ke file</Text>
+                <Text style={styles.menuSublabel}>Berkas tidak dienkripsi. Simpan di tempat pribadi.</Text>
               </View>
             </View>
             <ChevronRight size={16} color={colors.text.muted} />
@@ -994,6 +987,21 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
 
+      <Modal visible={deletePrompt} transparent animationType="slide" onRequestClose={() => { if (!deleting) closeDelete(); }}>
+        <View style={styles.modalBackdrop}><View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Hapus akun secara permanen?</Text>
+          <Text style={styles.modalHelperText}>Masukkan kata sandi akun. Transaksi, dompet, dan struk tidak bisa dipulihkan.</Text>
+          <TextInput secureTextEntry autoCapitalize="none" autoCorrect={false} autoComplete="current-password"
+            accessibilityLabel="Kata sandi akun" placeholder="Kata sandi" value={deletePassword} onChangeText={setDeletePassword}
+            style={[styles.csvTextInput, {height: 48}]} editable={!deleting} />
+          <View style={styles.csvActionsRow}>
+            <TouchableOpacity accessibilityRole="button" style={styles.csvSampleBtn} disabled={deleting} onPress={closeDelete}>
+              <Text style={styles.csvSampleText}>Batal</Text></TouchableOpacity>
+            <TouchableOpacity accessibilityRole="button" style={styles.csvSampleBtn} disabled={!deletePassword || deleting} onPress={confirmDelete}>
+              <Text style={styles.csvSampleText}>{deleting ? 'Menghapus...' : 'Hapus permanen'}</Text></TouchableOpacity>
+          </View>
+        </View></View>
+      </Modal>
       {/* CSV Import Modal */}
       <Modal visible={isImportCsvOpen} transparent animationType="slide">
         <View style={styles.modalBackdrop}>

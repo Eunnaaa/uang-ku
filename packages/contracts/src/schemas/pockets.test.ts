@@ -11,6 +11,12 @@ import {
 } from '../index';
 
 describe('Pocketing & Bank Integration Schemas (PRD Sections 79 & 80)', () => {
+  it('only lets a match action carry a transaction reference', () => {
+    const id = crypto.randomUUID();
+    expect(reconcileMutationSchema.safeParse({ action: 'ignore', matchedTransactionId: id }).success).toBe(false);
+    expect(reconcileMutationSchema.safeParse({ action: 'create_new', matchedTransactionId: id }).success).toBe(false);
+    expect(reconcileMutationSchema.safeParse({ action: 'match', matchedTransactionId: id }).success).toBe(true);
+  });
   it('validates a valid pocket creation payload', () => {
     const valid = {
       name: 'Makan & Kuliner',

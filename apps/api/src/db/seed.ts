@@ -91,6 +91,7 @@ export async function seedDatabase(): Promise<void> {
       console.log('🌱 Seeded system categories in PostgreSQL');
     }
   } catch (err: any) {
-    console.warn('Database seed skipped or failed (Postgres offline or read-only):', err.message);
+    if (process.env.NODE_ENV === 'test') throw err;
+    console.warn('Database seed skipped or failed. Check database connectivity and migration status.');
   }
 }

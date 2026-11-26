@@ -1,121 +1,42 @@
 import { Elysia } from 'elysia';
-import {
-  createTemplateSchema,
-  updateTemplateSchema,
-  type TemplateModel,
-} from '@uangku/contracts';
+import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
+import { createTemplateSchema, updateTemplateSchema } from '@uangku/contracts';
 import { authMiddleware } from '../../middleware/auth';
 import { successResponse } from '../../middleware/error-handler';
 import { db, schema } from '../../db/client';
-import { eq } from 'drizzle-orm';
+import { checkReferences } from '../../db/ledger';
+import { requireRow } from '../../db/require-row';
 
-export const demoTemplates: TemplateModel[] = [];
-
-export const templateRoutes = new Elysia({ prefix: '/api/v1/templates' })
-  .use(authMiddleware)
-  .get('/', async ({ user }) => {
-    const list = demoTemplates
-      .filter((t) => t.userId === user.userId)
-      .sort((a, b) => b.useCount - a.useCount || a.sortOrder - b.sortOrder);
-    return successResponse(list);
-  })
+const t = schema.transactionTemplates;
+const owned = (id: string, owner: string) => and(eq(t.id,id), eq(t.userId,owner));
+export const templateRoutes = new Elysia({ prefix: '/api/v1/templates' }).use(authMiddleware)
+  .get('/', async ({ user }) => successResponse(await db.select().from(t).where(eq(t.userId,user.userId))
+    .orderBy(desc(t.useCount), asc(t.sortOrder))))
   .post('/', async ({ body, user, set }) => {
-    const userTemplates = demoTemplates.filter((t) => t.userId === user.userId);
-    if (userTemplates.length >= 20) {
-      set.status = 400;
-      return {
-        success: false,
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Maksimum 20 template per pengguna telah tercapai.',
-        },
-      };
-    }
-
     const input = createTemplateSchema.parse(body);
-    const newTemplate: TemplateModel = {
-      id: crypto.randomUUID(),
-      userId: user.userId,
-      name: input.name,
-      templatePayload: input.templatePayload,
-      sortOrder: input.sortOrder ?? 0,
-      useCount: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    demoTemplates.unshift(newTemplate);
-
-    try {
-      await db.insert(schema.transactionTemplates).values({
-        id: newTemplate.id,
-        userId: user.userId,
-        name: newTemplate.name,
-        templatePayload: newTemplate.templatePayload,
-        sortOrder: newTemplate.sortOrder,
-        useCount: 0,
-      });
-    } catch {}
-
-    return successResponse(newTemplate);
+    const row = await db.transaction(async tx => {
+      await tx.select({id:schema.profiles.id}).from(schema.profiles).where(eq(schema.profiles.id,user.userId)).for('update');
+      const [usage] = await tx.select({ n: count() }).from(t).where(eq(t.userId,user.userId));
+      if (usage.n >= 20) return null;
+      await checkReferences(tx, user.userId, input.templatePayload);
+      return requireRow(await tx.insert(t).values({ ...input, userId:user.userId }).returning());
+    });
+    if (!row) {
+      set.status = 400;
+      return { error:{ code:'VALIDATION_ERROR', message:'Maksimum 20 template per pengguna.' } };
+    }
+    return successResponse(row);
   })
-  .patch('/:id', async ({ params, body, user }) => {
-    const input = updateTemplateSchema.parse(body);
-    const template = demoTemplates.find((t) => t.id === params.id && t.userId === user.userId);
-    if (!template) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    if (input.name !== undefined) template.name = input.name;
-    if (input.templatePayload !== undefined) {
-      template.templatePayload = {
-        ...template.templatePayload,
-        ...input.templatePayload,
-      };
-    }
-    if (input.sortOrder !== undefined) template.sortOrder = input.sortOrder;
-    template.updatedAt = new Date().toISOString();
-
-    try {
-      await db.update(schema.transactionTemplates).set({
-        name: template.name,
-        templatePayload: template.templatePayload,
-        sortOrder: template.sortOrder,
-        updatedAt: new Date(template.updatedAt),
-      }).where(eq(schema.transactionTemplates.id, template.id));
-    } catch {}
-
-    return successResponse(template);
+  .patch('/:id', async ({ body, params, user }) => {
+    const { useCount: _ignored, ...patch } = updateTemplateSchema.parse(body);
+    return successResponse(await db.transaction(async tx => {
+      if (patch.templatePayload) await checkReferences(tx, user.userId, patch.templatePayload);
+      return requireRow(await tx.update(t).set({ ...patch, updatedAt:new Date() }).where(owned(params.id,user.userId)).returning());
+    }));
   })
   .delete('/:id', async ({ params, user }) => {
-    const index = demoTemplates.findIndex((t) => t.id === params.id && t.userId === user.userId);
-    if (index === -1) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    demoTemplates.splice(index, 1);
-
-    try {
-      await db.delete(schema.transactionTemplates).where(eq(schema.transactionTemplates.id, params.id));
-    } catch {}
-
-    return successResponse({ id: params.id, deleted: true });
+    const row = requireRow(await db.delete(t).where(owned(params.id,user.userId)).returning());
+    return successResponse({ id:row.id, deleted:true });
   })
-  .post('/:id/use', async ({ params, user }) => {
-    const template = demoTemplates.find((t) => t.id === params.id && t.userId === user.userId);
-    if (!template) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    template.useCount += 1;
-    template.updatedAt = new Date().toISOString();
-
-    try {
-      await db.update(schema.transactionTemplates).set({
-        useCount: template.useCount,
-        updatedAt: new Date(template.updatedAt),
-      }).where(eq(schema.transactionTemplates.id, template.id));
-    } catch {}
-
-    return successResponse(template);
-  });
+  .post('/:id/use', async ({ params, user }) => successResponse(requireRow(await db.update(t)
+    .set({ useCount:sql`${t.useCount} + 1`, updatedAt:new Date() }).where(owned(params.id,user.userId)).returning())));

@@ -20,6 +20,7 @@ import { pocketRoutes } from './modules/pockets/pocket.route';
 import { bankConnectionRoutes } from './modules/bank-connections/bank-connection.route';
 import { storageRoutes } from './modules/storage/storage.route';
 import { seedDatabase } from './db/seed';
+import { MAX_RECEIPT_BASE64_LENGTH } from '@uangku/contracts';
 
 // Seed PostgreSQL database asynchronously on startup
 if (process.env.NODE_ENV !== 'test') {
@@ -30,7 +31,7 @@ const corsOrigin = env.CORS_ORIGIN
   ? env.CORS_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean)
   : true;
 
-const app = new Elysia()
+const app = new Elysia({ serve: { maxRequestBodySize: MAX_RECEIPT_BASE64_LENGTH + 2048 } })
   .use(
     cors({
       origin: corsOrigin,
@@ -80,7 +81,7 @@ const app = new Elysia()
       return {
         status: 'degraded',
         database: 'disconnected',
-        error: err?.message || 'Database unreachable',
+        error: 'Database unreachable',
         version: '1.0.0',
         timestamp: new Date().toISOString(),
       };
@@ -100,11 +101,9 @@ const app = new Elysia()
   .use(appConfigRoutes)
   .use(pocketRoutes)
   .use(bankConnectionRoutes)
-  .use(storageRoutes)
-  .listen(env.PORT);
+  .use(storageRoutes);
 
-console.log(`✨ UangKu Elysia API is running at http://${app.server?.hostname}:${app.server?.port}`);
-console.log(`📚 Swagger documentation available at http://${app.server?.hostname}:${app.server?.port}/swagger`);
+if (import.meta.main) app.listen(env.PORT);
 
 export type App = typeof app;
 export default app;

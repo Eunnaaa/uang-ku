@@ -3,17 +3,17 @@ import { z } from 'zod';
 export const transactionTypeEnum = z.enum(['income', 'expense', 'transfer']);
 
 export const createTransactionSchema = z.object({
-  accountId: z.string().uuid('ID Akun tidak valid'),
-  destinationAccountId: z.string().uuid('ID Akun tujuan tidak valid').nullable().optional(),
-  categoryId: z.string().uuid('ID Kategori tidak valid').nullable().optional(),
-  pocketId: z.string().uuid('ID Kantong tidak valid').nullable().optional(),
+  accountId: z.guid('ID Akun tidak valid'),
+  destinationAccountId: z.guid('ID Akun tujuan tidak valid').nullable().optional(),
+  categoryId: z.guid('ID Kategori tidak valid').nullable().optional(),
+  pocketId: z.guid('ID Kantong tidak valid').nullable().optional(),
   type: transactionTypeEnum,
   amount: z.number().int('Nominal harus bilangan bulat').positive('Nominal harus lebih dari 0').max(999999999999, 'Nominal melebihi batas maksimal'),
   transferFee: z.number().int().min(0, 'Biaya transfer tidak boleh negatif').default(0).optional(),
   currency: z.string().length(3, 'Kode mata uang harus 3 karakter ISO').default('IDR'),
   note: z.string().max(255, 'Catatan maksimal 255 karakter').nullable().optional(),
   transactionDate: z.string().datetime('Format tanggal harus ISO 8601 string'),
-  clientId: z.string().uuid('Client ID harus berupa UUID valid'),
+  clientId: z.guid('Client ID harus berupa UUID valid'),
   receiptUrl: z.string().nullable().optional(),
 }).refine((data) => {
   if (data.type === 'transfer') {
@@ -34,10 +34,10 @@ export const createTransactionSchema = z.object({
 });
 
 export const updateTransactionSchema = z.object({
-  accountId: z.string().uuid().optional(),
-  destinationAccountId: z.string().uuid().nullable().optional(),
-  categoryId: z.string().uuid().nullable().optional(),
-  pocketId: z.string().uuid().nullable().optional(),
+  accountId: z.guid().optional(),
+  destinationAccountId: z.guid().nullable().optional(),
+  categoryId: z.guid().nullable().optional(),
+  pocketId: z.guid().nullable().optional(),
   type: transactionTypeEnum.optional(),
   amount: z.number().int().positive().max(999999999999).optional(),
   transferFee: z.number().int().min(0).optional(),
@@ -50,8 +50,8 @@ export const updateTransactionSchema = z.object({
 
 export const queryTransactionSchema = z.object({
   type: transactionTypeEnum.optional(),
-  accountId: z.string().uuid().optional(),
-  categoryId: z.string().uuid().optional(),
+  accountId: z.guid().optional(),
+  categoryId: z.guid().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),

@@ -1,3 +1,4 @@
+import { localMonthKey } from '../../src/db/month';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
@@ -94,7 +95,7 @@ export default function HomeScreen() {
 
   const loadData = useCallback(async () => {
     try {
-      const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+      const currentMonth = localMonthKey(new Date());
       const [accs, txs, sum, maskPref, pendingMuts] = await Promise.all([
         getLocalAccounts(),
         getLocalTransactions(),

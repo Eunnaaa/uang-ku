@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { AppState, View, Text, TouchableOpacity, StyleSheet, Linking, Modal } from 'react-native';
+import { AppState, View, Text, TextInput, TouchableOpacity, StyleSheet, Linking, Modal } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Stack } from 'expo-router';
 import { BlurView } from 'expo-blur';
@@ -8,7 +8,8 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import { colors, type ThemeColors } from '../src/theme/colors';
 import { getDb } from '../src/db/sqlite';
-import { AuthProvider } from '../src/auth/authContext';
+import { AuthProvider, useAuth } from '../src/auth/authContext';
+import { onPinExhausted, pinState, savePin, verifyPin } from '../src/auth/pin';
 import { ToastProvider } from '../src/components/Toast';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { WelcomeFlow } from '../src/components/WelcomeFlow';
@@ -17,25 +18,40 @@ import { hapticMedium, hapticSuccess, hapticError, hapticLight, hapticSelection 
 import { AppConfigService, type VersionCheckResult } from '../src/services/appConfigService';
 
 const BIOMETRIC_PREF_KEY = 'uangku_biometric_enabled';
-const PIN_STORAGE_KEY = 'uangku_app_pin_hash';
 const HAS_SEEN_ONBOARDING_KEY = 'uangku_has_completed_onboarding_v1';
 
 function RootAppContent() {
   const { colors, isDark } = useTheme();
+  const { user, login } = useAuth();
   const [isPrivacyShieldActive, setIsPrivacyShieldActive] = useState(false);
-  const [isBiometricLocked, setIsBiometricLocked] = useState(false);
+  const [isBiometricLocked, setIsBiometricLocked] = useState(true);
+  const [hasPin, setHasPin] = useState(false);
+  const authenticating = useRef(false);
+  const needsUnlock = useRef(true);
+  const lockGeneration = useRef(0);
+  const [hasOpened, setHasOpened] = useState(false);
   const [isWelcomeFlowVisible, setIsWelcomeFlowVisible] = useState(false);
   const [versionCheck, setVersionCheck] = useState<VersionCheckResult | null>(null);
   const [isPinScreenVisible, setIsPinScreenVisible] = useState(false);
   const [enteredPin, setEnteredPin] = useState('');
-  const [failedPinAttempts, setFailedPinAttempts] = useState(0);
+  const [recovery, setRecovery] = useState(false);
+  const [password, setPassword] = useState('');
+  const [replacementPin, setReplacementPin] = useState('');
+  const recovering = useRef(false);
   const [cooldownSeconds, setCooldownSeconds] = useState(0);
   const [pinError, setPinError] = useState('');
   const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const authenticateBiometric = useCallback(async () => {
+    if (authenticating.current) return;
+    authenticating.current = true;
+    const generation = lockGeneration.current;
     try {
-      const isEnabled = await SecureStore.getItemAsync(BIOMETRIC_PREF_KEY);
+      const [isEnabled, pin] = await Promise.all([SecureStore.getItemAsync(BIOMETRIC_PREF_KEY), pinState()]);
+      if (generation !== lockGeneration.current) return;
+      setHasPin(pin.hasPin);
+      setCooldownSeconds(pin.seconds);
+      if (pin.requiresLogin) { setRecovery(true); setIsBiometricLocked(true); return; }
       if (isEnabled === '1') {
         setIsBiometricLocked(true);
         const hasHardware = await LocalAuthentication.hasHardwareAsync();
@@ -47,7 +63,9 @@ function RootAppContent() {
             fallbackLabel: 'Gunakan PIN',
             disableDeviceFallback: false,
           });
-          if (res.success) {
+          if (res.success && lockGeneration.current === generation) {
+            needsUnlock.current = false;
+            setHasOpened(true);
             hapticSuccess();
             setIsBiometricLocked(false);
             setIsPinScreenVisible(false);
@@ -57,10 +75,15 @@ function RootAppContent() {
           }
         }
       } else {
+        if (lockGeneration.current !== generation) return;
+        needsUnlock.current = false;
+        setHasOpened(true);
         setIsBiometricLocked(false);
       }
     } catch {
-      setIsBiometricLocked(false);
+      setIsBiometricLocked(true);
+    } finally {
+      authenticating.current = false;
     }
   }, []);
 
@@ -73,26 +96,22 @@ function RootAppContent() {
       setPinError('');
 
       if (nextPin.length === 6) {
+        const generation = lockGeneration.current;
         // Verify PIN (PRD Section 66.3)
-        const savedPin = (await SecureStore.getItemAsync(PIN_STORAGE_KEY)) || '123456';
-        if (nextPin === savedPin) {
+        const result = await verifyPin(nextPin).catch(() => null);
+        if (lockGeneration.current !== generation) return;
+        if (result?.ok) {
+          needsUnlock.current = false;
+          setHasOpened(true);
           hapticSuccess();
           setIsBiometricLocked(false);
           setIsPinScreenVisible(false);
           setEnteredPin('');
-          setFailedPinAttempts(0);
         } else {
           hapticError();
-          const nextAttempts = failedPinAttempts + 1;
-          setFailedPinAttempts(nextAttempts);
           setEnteredPin('');
-
-          if (nextAttempts >= 5) {
-            setCooldownSeconds(30);
-            setPinError('5x salah. Terkunci selama 30 detik.');
-          } else {
-            setPinError(`PIN salah (${nextAttempts}/5). Coba lagi.`);
-          }
+          setCooldownSeconds(result?.seconds ?? 0);
+          setPinError(!result ? 'PIN tidak dapat diverifikasi.' : result.seconds ? 'Tunggu sebelum mencoba lagi.' : 'PIN salah.');
         }
       }
     }
@@ -103,6 +122,35 @@ function RootAppContent() {
     hapticLight();
     setEnteredPin((prev) => prev.slice(0, -1));
     setPinError('');
+  };
+
+  useEffect(() => onPinExhausted(() => {
+    lockGeneration.current++;
+    needsUnlock.current = true;
+    setIsBiometricLocked(true);
+    setRecovery(true);
+    setIsPinScreenVisible(false);
+    setEnteredPin('');
+  }), []);
+
+  const recoverPin = async () => {
+    if (!user || recovering.current || !/^\d{6}$/.test(replacementPin)) return;
+    recovering.current = true;
+    const generation = lockGeneration.current;
+    try {
+      const ok = user.isGuest ? (await LocalAuthentication.authenticateAsync({ promptMessage: 'Verifikasi pemilik perangkat' })).success
+        : await login(user.email, password, user.id);
+      if (!ok || generation !== lockGeneration.current) return;
+      await savePin(replacementPin);
+      setRecovery(false);
+      setCooldownSeconds(0);
+      setPinError('');
+      if (generation !== lockGeneration.current) return;
+      needsUnlock.current = false;
+      setHasOpened(true);
+      setIsBiometricLocked(false);
+    } catch { setPinError('Pemulihan gagal. Data tetap terkunci.'); }
+    finally { recovering.current = false; setPassword(''); setReplacementPin(''); }
   };
 
   // Cooldown timer interval
@@ -133,9 +181,17 @@ function RootAppContent() {
     const subscription = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'inactive' || nextAppState === 'background') {
         setIsPrivacyShieldActive(true);
+        if (nextAppState === 'background') {
+          lockGeneration.current++;
+          needsUnlock.current = true;
+          setIsBiometricLocked(true);
+          setEnteredPin('');
+          setPassword('');
+          setReplacementPin('');
+        }
       } else if (nextAppState === 'active') {
         setIsPrivacyShieldActive(false);
-        authenticateBiometric();
+        if (needsUnlock.current) authenticateBiometric();
       }
     });
 
@@ -154,7 +210,7 @@ function RootAppContent() {
   return (
     <>
       <StatusBar style={isDark ? 'light' : 'dark'} />
-      <Stack
+      {hasOpened && !recovery && <Stack
         screenOptions={{
           headerShown: false,
           contentStyle: { backgroundColor: colors.bg.base },
@@ -170,11 +226,11 @@ function RootAppContent() {
             contentStyle: { backgroundColor: colors.bg.base },
           }}
         />
-      </Stack>
+      </Stack>}
 
       {/* Multitasking Privacy Blur Shield & Biometric Lock (PRD Section 31.4 & 66) */}
       {(isPrivacyShieldActive || isBiometricLocked) && (
-        <View style={StyleSheet.absoluteFill}>
+        <Modal visible transparent={false} animationType="none" onRequestClose={() => {}}>
           <BlurView intensity={95} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill}>
             <View style={styles.shieldCenter}>
               <View style={styles.shieldIconWrap}>
@@ -185,11 +241,27 @@ function RootAppContent() {
                 )}
               </View>
 
-              {isBiometricLocked && !isPinScreenVisible && (
+              {isBiometricLocked && recovery && <View style={styles.lockInfoWrap}>
+                <Text style={styles.lockTitle}>Atur ulang PIN</Text>
+                <Text style={styles.lockSubtitle}>{user?.isGuest ? 'Verifikasi perangkat untuk membuat PIN baru.' :
+                  'Setelah 10 percobaan salah, masuk kembali dengan kata sandi akun ini.'}</Text>
+                {!user?.isGuest && <TextInput secureTextEntry autoCapitalize="none" autoComplete="current-password"
+                  accessibilityLabel="Kata sandi akun" placeholder="Kata sandi akun" placeholderTextColor={colors.text.muted}
+                  style={{color:colors.text.primary, minHeight:48}} value={password} onChangeText={setPassword} />}
+                <TextInput secureTextEntry keyboardType="number-pad" maxLength={6} placeholder="PIN baru (6 angka)"
+                  accessibilityLabel="PIN baru enam angka" placeholderTextColor={colors.text.muted} style={{color:colors.text.primary,minHeight:48}}
+                  value={replacementPin} onChangeText={setReplacementPin} />
+                <TouchableOpacity accessibilityRole="button" style={styles.unlockBtn} onPress={recoverPin}
+                  disabled={!/^\d{6}$/.test(replacementPin) || (!user?.isGuest && !password)}>
+                  <Text style={styles.unlockBtnText}>Verifikasi dan ganti PIN</Text>
+                </TouchableOpacity>
+                {!!pinError && <Text style={styles.lockSubtitle}>{pinError}</Text>}
+              </View>}
+              {isBiometricLocked && !recovery && !isPinScreenVisible && (
                 <View style={styles.lockInfoWrap}>
                   <Text style={styles.lockTitle}>UangKu Terkunci</Text>
                   <Text style={styles.lockSubtitle}>
-                    Data keuangan diproteksi oleh enkripsi perangkat Secure Enclave
+                    Verifikasi identitas untuk melihat data keuangan.
                   </Text>
                   <TouchableOpacity
                     activeOpacity={0.8}
@@ -201,7 +273,7 @@ function RootAppContent() {
                   >
                     <Text style={styles.unlockBtnText}>Buka dengan Face ID</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity
+                  {hasPin && <TouchableOpacity
                     activeOpacity={0.7}
                     style={styles.pinFallbackBtn}
                     onPress={() => {
@@ -211,12 +283,12 @@ function RootAppContent() {
                   >
                     <KeyRound size={15} color={colors.gold.champagne} />
                     <Text style={styles.pinFallbackText}>Gunakan PIN (Fallback)</Text>
-                  </TouchableOpacity>
+                  </TouchableOpacity>}
                 </View>
               )}
 
               {/* In-App 6-Digit PIN Screen (PRD Section 66.3) */}
-              {isBiometricLocked && isPinScreenVisible && (
+              {isBiometricLocked && !recovery && isPinScreenVisible && (
                 <View style={styles.pinContainer}>
                   <Text style={styles.pinPromptTitle}>Masukkan PIN UangKu</Text>
                   <Text style={styles.pinPromptSubtitle}>
@@ -306,12 +378,12 @@ function RootAppContent() {
               )}
             </View>
           </BlurView>
-        </View>
+        </Modal>
       )}
 
       {/* Intro Animation & Welcome Page Flow */}
       <WelcomeFlow
-        visible={isWelcomeFlowVisible}
+        visible={isWelcomeFlowVisible && !isBiometricLocked && !isPrivacyShieldActive}
         onClose={handleCompleteWelcomeFlow}
         startWithAnimation={true}
       />

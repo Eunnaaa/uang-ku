@@ -1,140 +1,57 @@
 import { Elysia } from 'elysia';
-import {
-  createRecurringRuleSchema,
-  updateRecurringRuleSchema,
-  type RecurringRuleModel,
-} from '@uangku/contracts';
+import { and, eq } from 'drizzle-orm';
+import { z } from 'zod';
+import { createRecurringRuleSchema, updateRecurringRuleSchema, transactionTypeEnum } from '@uangku/contracts';
 import { authMiddleware } from '../../middleware/auth';
 import { successResponse } from '../../middleware/error-handler';
-import { demoTransactions } from '../transactions/transaction.route';
 import { db, schema } from '../../db/client';
-import { eq } from 'drizzle-orm';
+import { checkReferences, createEntry } from '../../db/ledger';
+import { requireRow } from '../../db/require-row';
 
-export const demoRecurringRules: RecurringRuleModel[] = [];
-
-export const recurringRoutes = new Elysia({ prefix: '/api/v1/recurring-rules' })
-  .use(authMiddleware)
-  .get('/', async ({ user }) => {
-    const list = demoRecurringRules.filter((r) => r.userId === user.userId);
-    return successResponse(list);
-  })
+const r = schema.recurringRules;
+const owned = (id: string, owner: string) => and(eq(r.id, id), eq(r.userId, owner));
+function nextDue(date: string, frequency: string) {
+  const due = new Date(`${date}T00:00:00Z`);
+  if (frequency === 'monthly' || frequency === 'yearly') {
+    const day = due.getUTCDate();
+    due.setUTCDate(1);
+    due.setUTCMonth(due.getUTCMonth() + (frequency === 'monthly' ? 1 : 12));
+    const lastDay = new Date(Date.UTC(due.getUTCFullYear(), due.getUTCMonth() + 1, 0)).getUTCDate();
+    due.setUTCDate(Math.min(day, lastDay));
+  } else {
+    due.setUTCDate(due.getUTCDate() + (frequency === 'daily' ? 1 : frequency === 'weekly' ? 7 : 14));
+  }
+  return due.toISOString().slice(0, 10);
+}
+export const recurringRoutes = new Elysia({ prefix: '/api/v1/recurring-rules' }).use(authMiddleware)
+  .get('/', async ({ user }) => successResponse(await db.select().from(r).where(eq(r.userId, user.userId))))
   .post('/', async ({ body, user }) => {
     const input = createRecurringRuleSchema.parse(body);
-
-    const now = new Date();
-    const newRule: RecurringRuleModel = {
-      id: crypto.randomUUID(),
-      userId: user.userId,
-      accountId: input.accountId,
-      categoryId: input.categoryId ?? null,
-      type: input.type,
-      amount: input.amount,
-      frequency: input.frequency,
-      note: input.note ?? null,
-      nextDueDate: input.nextDueDate ?? now.toISOString().slice(0, 10),
-      isActive: true,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-    };
-
-    demoRecurringRules.unshift(newRule);
-
-    try {
-      await db.insert(schema.recurringRules).values({
-        id: newRule.id,
-        userId: user.userId,
-        accountId: newRule.accountId,
-        categoryId: newRule.categoryId || null,
-        type: newRule.type,
-        amount: newRule.amount,
-        frequency: newRule.frequency,
-        note: newRule.note || null,
-        nextDueDate: newRule.nextDueDate,
-        isActive: true,
-      });
-    } catch {}
-
-    return successResponse(newRule);
+    return successResponse(await db.transaction(async tx => {
+      await checkReferences(tx, user.userId, input);
+      const nextDueDate = z.string().date().parse(input.nextDueDate ?? new Date().toISOString().slice(0, 10));
+      return requireRow(await tx.insert(r).values({ ...input, nextDueDate, userId: user.userId }).returning());
+    }));
   })
   .patch('/:id', async ({ params, body, user }) => {
     const input = updateRecurringRuleSchema.parse(body);
-    const rule = demoRecurringRules.find((r) => r.id === params.id && r.userId === user.userId);
-    if (!rule) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    if (input.amount !== undefined) rule.amount = input.amount;
-    if (input.frequency !== undefined) rule.frequency = input.frequency;
-    if (input.note !== undefined) rule.note = input.note;
-    if (input.nextDueDate !== undefined) rule.nextDueDate = input.nextDueDate;
-    if (input.isActive !== undefined) rule.isActive = input.isActive;
-    rule.updatedAt = new Date().toISOString();
-
-    try {
-      await db.update(schema.recurringRules).set({
-        amount: rule.amount,
-        frequency: rule.frequency,
-        note: rule.note,
-        nextDueDate: rule.nextDueDate,
-        isActive: rule.isActive,
-        updatedAt: new Date(rule.updatedAt),
-      }).where(eq(schema.recurringRules.id, rule.id));
-    } catch {}
-
-    return successResponse(rule);
+    if (input.nextDueDate !== undefined) z.string().date().parse(input.nextDueDate);
+    return successResponse(requireRow(await db.update(r).set({ ...input, updatedAt: new Date() })
+      .where(owned(params.id, user.userId)).returning()));
   })
   .delete('/:id', async ({ params, user }) => {
-    const index = demoRecurringRules.findIndex((r) => r.id === params.id && r.userId === user.userId);
-    if (index === -1) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    demoRecurringRules.splice(index, 1);
-
-    try {
-      await db.delete(schema.recurringRules).where(eq(schema.recurringRules.id, params.id));
-    } catch {}
-
-    return successResponse({ id: params.id, deleted: true });
+    const row = requireRow(await db.delete(r).where(owned(params.id, user.userId)).returning());
+    return successResponse({ id: row.id, deleted: true });
   })
-  .post('/:id/trigger', async ({ params, user }) => {
-    const rule = demoRecurringRules.find((r) => r.id === params.id && r.userId === user.userId);
-    if (!rule) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    // Generate normal transaction
-    const now = new Date();
-    const newTx = {
-      id: crypto.randomUUID(),
-      userId: user.userId,
-      accountId: rule.accountId,
-      destinationAccountId: null,
-      categoryId: rule.categoryId || null,
-      type: rule.type,
-      amount: rule.amount,
-      transferFee: 0,
-      currency: 'IDR',
-      note: rule.note ? `${rule.note} (Otomatis)` : `Transaksi Berulang (${rule.frequency})`,
-      transactionDate: now.toISOString(),
-      clientId: crypto.randomUUID(),
-      version: 1,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-      deletedAt: null,
-    };
-    demoTransactions.unshift(newTx);
-
-    // Advance nextDueDate
-    const due = new Date(rule.nextDueDate);
-    if (rule.frequency === 'daily') due.setDate(due.getDate() + 1);
-    else if (rule.frequency === 'weekly') due.setDate(due.getDate() + 7);
-    else if (rule.frequency === 'biweekly') due.setDate(due.getDate() + 14);
-    else if (rule.frequency === 'monthly') due.setMonth(due.getMonth() + 1);
-    else if (rule.frequency === 'yearly') due.setFullYear(due.getFullYear() + 1);
-
-    rule.nextDueDate = due.toISOString().slice(0, 10);
-    rule.updatedAt = now.toISOString();
-
-    return successResponse({ transaction: newTx, nextDueDate: rule.nextDueDate });
-  });
+  .post('/:id/trigger', async ({ params, user }) => successResponse(await db.transaction(async tx => {
+    const where = owned(params.id, user.userId);
+    const rule = requireRow(await tx.select().from(r).where(and(where, eq(r.isActive, true))).for('update'));
+    const nextDueDate = nextDue(rule.nextDueDate, rule.frequency);
+    const type = transactionTypeEnum.extract(['income','expense']).parse(rule.type);
+    const categoryId = rule.categoryId ?? (type === 'income' ? 'c2000000-0000-0000-0000-000000000006' : 'c1000000-0000-0000-0000-000000000008');
+    const transaction = await createEntry(tx, user.userId, { accountId: rule.accountId, categoryId,
+      type, amount: rule.amount, currency: 'IDR', note: rule.note || `Transaksi Berulang (${rule.frequency})`,
+      transactionDate: new Date().toISOString(), clientId: crypto.randomUUID() });
+    await tx.update(r).set({ nextDueDate, updatedAt: new Date() }).where(where);
+    return { transaction, nextDueDate };
+  })));

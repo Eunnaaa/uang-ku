@@ -11,6 +11,7 @@ export const ALLOWED_RECEIPT_MIME_TYPES = [
 export type AllowedReceiptMimeType = (typeof ALLOWED_RECEIPT_MIME_TYPES)[number];
 
 export const MAX_RECEIPT_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+export const MAX_RECEIPT_BASE64_LENGTH = Math.ceil(MAX_RECEIPT_FILE_SIZE_BYTES / 3) * 4;
 
 export const uploadReceiptResponseSchema = z.object({
   fileUrl: z.string().url(),
@@ -26,7 +27,7 @@ export type UploadReceiptResponse = z.infer<typeof uploadReceiptResponseSchema>;
 export const uploadReceiptPayloadSchema = z.object({
   filename: z.string().min(1).max(255),
   mimeType: z.enum(ALLOWED_RECEIPT_MIME_TYPES),
-  base64Data: z.string().min(1),
+  base64Data: z.string().min(1).max(MAX_RECEIPT_BASE64_LENGTH + 64),
 });
 
 export type UploadReceiptPayload = z.infer<typeof uploadReceiptPayloadSchema>;

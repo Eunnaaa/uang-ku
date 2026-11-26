@@ -3,9 +3,9 @@ import { transactionTypeEnum } from './transactions';
 
 export const templatePayloadSchema = z.object({
   amount: z.number().int().positive('Nominal template harus lebih besar dari 0').max(999999999999),
-  categoryId: z.string().uuid().nullable().optional(),
-  accountId: z.string().uuid('Akun wajib dipilih'),
-  destinationAccountId: z.string().uuid().nullable().optional(),
+  categoryId: z.guid().nullable().optional(),
+  accountId: z.guid('Akun wajib dipilih'),
+  destinationAccountId: z.guid().nullable().optional(),
   type: transactionTypeEnum,
   note: z.string().max(255).nullable().optional(),
   currency: z.string().length(3).default('IDR'),

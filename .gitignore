@@ -30,6 +30,7 @@ web-build/
 # Bun
 bun.lockb
 *.lock
+!bun.lock
 
 # Build & Logs
 npm-debug.log*
@@ -40,3 +41,4 @@ yarn-error.log*
 
 # Uploads
 apps/api/public/uploads/
+private/uploads/

@@ -2,138 +2,71 @@ import { Elysia } from 'elysia';
 import {
   createBudgetSchema,
   updateBudgetSchema,
+  reportSummaryQuerySchema,
   type BudgetSummaryItem,
   type BudgetStatus,
 } from '@uangku/contracts';
 import { authMiddleware } from '../../middleware/auth';
 import { successResponse } from '../../middleware/error-handler';
-import { defaultCategories } from '../categories/category.route';
-import { demoTransactions } from '../transactions/transaction.route';
 import { db, schema } from '../../db/client';
-import { eq } from 'drizzle-orm';
+import { monthBounds } from '../../db/month';
+import { checkReferences, type Tx } from '../../db/ledger';
+import { requireRow } from '../../db/require-row';
+import { and, eq, gte, isNull, lt, ne, or } from 'drizzle-orm';
 
-export interface BudgetRecord {
-  id: string;
-  userId: string;
-  categoryId: string;
-  amount: number;
-  currency: string;
-  period: 'monthly' | 'weekly';
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
+const b = schema.budgets;
+const owned = (id: string, owner: string) => and(eq(b.id,id), eq(b.userId,owner));
+const active = (owner: string) => and(eq(b.userId,owner),eq(b.isActive,true));
+async function lockBudgets(tx: Tx, owner: string) {
+  await tx.select({id:schema.profiles.id}).from(schema.profiles).where(eq(schema.profiles.id,owner)).for('update');
 }
-
-export const demoBudgets: BudgetRecord[] = [];
-
-export const budgetRoutes = new Elysia({ prefix: '/api/v1/budgets' })
-  .use(authMiddleware)
-  .get('/', async ({ user }) => {
-    const list = demoBudgets.filter((b) => b.userId === user.userId && b.isActive);
-    return successResponse(list);
-  })
+export const budgetRoutes = new Elysia({ prefix: '/api/v1/budgets' }).use(authMiddleware)
+  .get('/', async ({ user }) => successResponse(await db.select().from(b).where(active(user.userId))))
   .post('/', async ({ body, user, set }) => {
     const input = createBudgetSchema.parse(body);
-
-    // Rule PRD 60.5: Satu user hanya dapat memiliki satu budget aktif per kategori per periode
-    const existing = demoBudgets.find(
-      (b) =>
-        b.userId === user.userId &&
-        b.categoryId === input.categoryId &&
-        b.period === input.period &&
-        b.isActive
-    );
-    if (existing) {
+    const row = await db.transaction(async tx => {
+      await lockBudgets(tx,user.userId);
+      await checkReferences(tx,user.userId,input);
+      if ((await tx.select({id:b.id}).from(b).where(and(active(user.userId),eq(b.categoryId,input.categoryId),eq(b.period,input.period))))[0]) return null;
+      return requireRow(await tx.insert(b).values({ ...input, userId:user.userId }).returning());
+    });
+    if (!row) {
       set.status = 400;
-      return {
-        success: false,
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Budget aktif untuk kategori dan periode ini sudah ada.',
-        },
-      };
+      return { error:{ code:'VALIDATION_ERROR', message:'Budget aktif untuk kategori dan periode ini sudah ada.' } };
     }
-
-    const newBudget: BudgetRecord = {
-      id: crypto.randomUUID(),
-      userId: user.userId,
-      categoryId: input.categoryId,
-      amount: input.amount,
-      currency: input.currency ?? 'IDR',
-      period: input.period ?? 'monthly',
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    demoBudgets.unshift(newBudget);
-
-    try {
-      await db.insert(schema.budgets).values({
-        id: newBudget.id,
-        userId: user.userId,
-        categoryId: newBudget.categoryId,
-        amount: newBudget.amount,
-        currency: newBudget.currency,
-        period: newBudget.period,
-        isActive: true,
-      });
-    } catch {}
-
-    return successResponse(newBudget);
+    return successResponse(row);
   })
   .patch('/:id', async ({ params, body, user }) => {
-    const input = updateBudgetSchema.parse(body);
-    const budget = demoBudgets.find((b) => b.id === params.id && b.userId === user.userId);
-    if (!budget) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    if (input.amount !== undefined) budget.amount = input.amount;
-    if (input.period !== undefined) budget.period = input.period;
-    if (input.isActive !== undefined) budget.isActive = input.isActive;
-    budget.updatedAt = new Date().toISOString();
-
-    try {
-      await db.update(schema.budgets).set({
-        amount: budget.amount,
-        period: budget.period,
-        isActive: budget.isActive,
-        updatedAt: new Date(budget.updatedAt),
-      }).where(eq(schema.budgets.id, budget.id));
-    } catch {}
-
-    return successResponse(budget);
+    const patch = updateBudgetSchema.parse(body);
+    return successResponse(await db.transaction(async tx => {
+      await lockBudgets(tx,user.userId);
+      const where = owned(params.id,user.userId);
+      const row = requireRow(await tx.select().from(b).where(where));
+      if (patch.isActive ?? row.isActive) {
+        const [other] = await tx.select({id:b.id}).from(b).where(and(active(user.userId), ne(b.id,row.id),
+          eq(b.categoryId,row.categoryId), eq(b.period,patch.period ?? row.period)));
+        if (other) throw new Error('SYNC_CONFLICT');
+      }
+      return requireRow(await tx.update(b).set({ ...patch,updatedAt:new Date() }).where(where).returning());
+    }));
   })
   .delete('/:id', async ({ params, user }) => {
-    const index = demoBudgets.findIndex((b) => b.id === params.id && b.userId === user.userId);
-    if (index === -1) {
-      throw new Error('RESOURCE_NOT_FOUND');
-    }
-
-    demoBudgets.splice(index, 1);
-
-    try {
-      await db.delete(schema.budgets).where(eq(schema.budgets.id, params.id));
-    } catch {}
-
-    return successResponse({ id: params.id, deleted: true });
+    const row = requireRow(await db.delete(b).where(owned(params.id,user.userId)).returning());
+    return successResponse({id:row.id,deleted:true});
   })
   // PRD 60.4: Summary endpoint
   .get('/summary', async ({ query, user }) => {
-    const targetMonth = (query.month as string) || new Date().toISOString().slice(0, 7);
-    const userBudgets = demoBudgets.filter((b) => b.userId === user.userId && b.isActive);
+    const { startDate, endDate } = await monthBounds(user.userId, query.month ? reportSummaryQuerySchema.parse(query).month : undefined);
+    const userBudgets = await db.select().from(b).where(active(user.userId));
 
-    const userTx = demoTransactions.filter(
-      (t) =>
-        t.userId === user.userId &&
-        t.type === 'expense' &&
-        !t.deletedAt &&
-        t.transactionDate.startsWith(targetMonth)
-    );
+    const t = schema.transactions;
+    const userTx = await db.select({ categoryId: t.categoryId, amount: t.amount }).from(t).where(and(
+      eq(t.userId, user.userId), eq(t.type, 'expense'), isNull(t.deletedAt), gte(t.transactionDate, startDate), lt(t.transactionDate, endDate)));
 
+    const accessible = await db.select().from(schema.categories).where(or(eq(schema.categories.userId,user.userId),
+      and(isNull(schema.categories.userId),eq(schema.categories.isSystem,true))));
     const summaryList: BudgetSummaryItem[] = userBudgets.map((b) => {
-      const category = defaultCategories.find((c) => c.id === b.categoryId);
+      const category = accessible.find((c) => c.id === b.categoryId);
       const spentAmount = userTx
         .filter((t) => t.categoryId === b.categoryId)
         .reduce((sum, t) => sum + t.amount, 0);

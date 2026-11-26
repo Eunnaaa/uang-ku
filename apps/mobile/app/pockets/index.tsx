@@ -10,7 +10,6 @@ import {
   TextInput,
   Alert,
   RefreshControl,
-  Share,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -24,11 +23,9 @@ import {
   Trash2,
   Wallet,
   Users,
-  Share2,
   HandCoins,
   UserPlus,
   X,
-  Link2,
   CheckCircle2,
   Sparkles,
   Globe,
@@ -63,7 +60,6 @@ import {
   deleteLocalPocketMember,
   addLocalPocketContribution,
   toggleLocalPocketShared,
-  joinLocalSharedPocket,
 } from '../../src/db/sqlite';
 import { hapticMedium, hapticSelection, hapticSuccess, hapticError } from '../../src/theme/haptics';
 import { useToast } from '../../src/components/Toast';
@@ -84,7 +80,6 @@ export default function PocketsScreen() {
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
-  const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isContributeModalOpen, setIsContributeModalOpen] = useState(false);
   const [isAddMemberModalOpen, setIsAddMemberModalOpen] = useState(false);
@@ -119,10 +114,6 @@ export default function PocketsScreen() {
   const [transferDestPocketId, setTransferDestPocketId] = useState<string | null>(null);
   const [transferAmountInput, setTransferAmountInput] = useState('');
 
-  // Join Form State
-  const [joinCodeInput, setJoinCodeInput] = useState('');
-  const [joinNameInput, setJoinNameInput] = useState('');
-  const [joinAvatarInput, setJoinAvatarInput] = useState('smile');
 
   // Contribute Form State
   const [contributeAmountInput, setContributeAmountInput] = useState('');
@@ -239,57 +230,17 @@ export default function PocketsScreen() {
     }
   };
 
-  const handleShareInvite = async (pocket: PocketModel) => {
-    hapticSelection();
-    const code = pocket.inviteCode || 'PKT-UANGKU';
-    try {
-      await Share.share({
-        title: `Undangan Kantong Bersama: ${pocket.name}`,
-        message: `Yuk patungan & nabung bareng di Kantong Bersama "${pocket.name}" di aplikasi UangKu!\n\nMasukkan Kode Undangan: ${code}\nTarget: ${pocket.targetAmount ? formatRupiah(pocket.targetAmount) : 'Bebas'}`,
-      });
-    } catch {
-      toast.showSuccess('Kode Undangan', code);
-    }
-  };
-
   const handleToggleShareMode = async (pocket: PocketModel) => {
     try {
       hapticMedium();
-      const code = await toggleLocalPocketShared(pocket.id, !pocket.isShared);
+      await toggleLocalPocketShared(pocket.id, !pocket.isShared);
       toast.showSuccess(
         pocket.isShared ? 'Kantong Diubah ke Pribadi' : 'Kantong Bersama Aktif!',
-        code ? `Kode: ${code}` : pocket.name
+        pocket.name
       );
       await loadData();
     } catch (err: any) {
       toast.showError('Gagal Mengubah Mode', err.message);
-    }
-  };
-
-  const handleJoinViaCode = async () => {
-    if (!joinCodeInput.trim()) {
-      toast.showWarning('Perhatian', 'Masukkan kode undangan kantong.');
-      return;
-    }
-    if (!joinNameInput.trim()) {
-      toast.showWarning('Perhatian', 'Masukkan nama Anda untuk bergabung.');
-      return;
-    }
-
-    try {
-      hapticSuccess();
-      const res = await joinLocalSharedPocket(joinCodeInput, joinNameInput, joinAvatarInput);
-      if (res.success) {
-        toast.showSuccess('Berhasil Bergabung', res.message);
-        setIsJoinModalOpen(false);
-        setJoinCodeInput('');
-        setJoinNameInput('');
-        await loadData();
-      } else {
-        toast.showError('Gagal Bergabung', res.message);
-      }
-    } catch (err: any) {
-      toast.showError('Error', err.message);
     }
   };
 
@@ -465,16 +416,6 @@ export default function PocketsScreen() {
         <Text style={styles.headerTitle}>Kantong Keuangan</Text>
         <View style={styles.headerRightActions}>
           <TouchableOpacity
-            style={styles.joinHeaderBtn}
-            onPress={() => {
-              hapticSelection();
-              setIsJoinModalOpen(true);
-            }}
-          >
-            <Link2 size={15} color={colors.gold.champagne} />
-            <Text style={styles.joinHeaderBtnText}>Gabung</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
             style={styles.addBtn}
             onPress={() => openCreateModal()}
           >
@@ -627,7 +568,7 @@ export default function PocketsScreen() {
             </Text>
             <Text style={styles.emptySubtitle}>
               {filterTab === 'shared'
-                ? 'Buat kantong patungan bersama teman/keluarga atau masukkan kode undangan untuk bergabung.'
+                ? 'Catat anggota dan setoran patungan di perangkat ini. Undangan antarperangkat belum tersedia.'
                 : 'Bagi saldo rekeningmu ke beberapa sub-kantong untuk mengamankan uang makan, belanja bulanan, dan tagihan.'}
             </Text>
             {filterTab === 'shared' ? (
@@ -637,12 +578,6 @@ export default function PocketsScreen() {
                   onPress={() => openCreateModal(true)}
                 >
                   <Text style={styles.emptyActionBtnText}>+ Buat Kantong Bersama</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.emptyActionSecondaryBtn}
-                  onPress={() => setIsJoinModalOpen(true)}
-                >
-                  <Text style={styles.emptyActionSecondaryText}>Gabung via Kode</Text>
                 </TouchableOpacity>
               </View>
             ) : (
@@ -696,24 +631,6 @@ export default function PocketsScreen() {
                   </View>
                   <Text style={styles.pocketAmount}>{formatRupiah(pkt.allocatedBalance)}</Text>
                 </View>
-
-                {/* Invite Code Bar for Shared Pockets */}
-                {pkt.isShared && pkt.inviteCode && (
-                  <View style={styles.inviteCodeBar}>
-                    <View style={styles.inviteCodeLeft}>
-                      <Link2 size={12} color={colors.gold.champagne} />
-                      <Text style={styles.inviteCodeLabel}>Kode Undangan:</Text>
-                      <Text style={styles.inviteCodeValue}>{pkt.inviteCode}</Text>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.shareBtnSmall}
-                      onPress={() => handleShareInvite(pkt)}
-                    >
-                      <Share2 size={12} color={colors.gold.champagne} />
-                      <Text style={styles.shareBtnSmallText}>Bagikan</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
 
                 {hasTarget && (
                   <View style={styles.progressContainer}>
@@ -851,23 +768,6 @@ export default function PocketsScreen() {
                   </View>
                 )}
               </View>
-
-              {/* Invite Code Share Card */}
-              {activePocket?.inviteCode && (
-                <View style={styles.inviteShareBox}>
-                  <View>
-                    <Text style={styles.inviteShareLabel}>KODE UNDANGAN GABUNG</Text>
-                    <Text style={styles.inviteShareCode}>{activePocket.inviteCode}</Text>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.inviteShareBtn}
-                    onPress={() => activePocket && handleShareInvite(activePocket)}
-                  >
-                    <Share2 size={14} color={isDark ? '#090A0E' : '#FFFFFF'} />
-                    <Text style={styles.inviteShareBtnText}>Undang Teman</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
 
               {/* Action: Setor Patungan Button */}
               <TouchableOpacity
@@ -1042,88 +942,6 @@ export default function PocketsScreen() {
                 onPress={handleAddContribution}
               >
                 <Text style={styles.submitBtnText}>Simpan Setoran</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* ======================================================== */}
-      {/* MODAL 3: Gabung Kantong Bersama via Kode Undangan */}
-      {/* ======================================================== */}
-      <Modal visible={isJoinModalOpen} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity
-            style={StyleSheet.absoluteFill}
-            activeOpacity={1}
-            onPress={() => setIsJoinModalOpen(false)}
-          />
-          <View style={styles.modalSheet}>
-            <View style={styles.modalDragHandle} />
-            <View style={styles.modalHeaderCloseRow}>
-              <View style={styles.modalTitleRow}>
-                <Link2 size={20} color={colors.gold.champagne} />
-                <Text style={styles.modalTitle}>Gabung Kantong Bersama</Text>
-              </View>
-              <TouchableOpacity onPress={() => setIsJoinModalOpen(false)}>
-                <X size={20} color={colors.text.muted} />
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.modalSubtitle}>
-              Masukkan kode undangan yang dibagikan oleh teman atau keluarga Anda.
-            </Text>
-
-            <Text style={styles.modalLabel}>KODE UNDANGAN</Text>
-            <TextInput
-              style={[styles.textInput, { textTransform: 'uppercase', fontWeight: '700', letterSpacing: 1.5 }]}
-              value={joinCodeInput}
-              onChangeText={setJoinCodeInput}
-              placeholder="Cth: PKT-7X9K2"
-              placeholderTextColor={colors.text.muted}
-              autoCapitalize="characters"
-            />
-
-            <Text style={styles.modalLabel}>NAMA LENGKAP ANDA</Text>
-            <TextInput
-              style={styles.textInput}
-              value={joinNameInput}
-              onChangeText={setJoinNameInput}
-              placeholder="Cth: Gary Hardyansyah"
-              placeholderTextColor={colors.text.muted}
-            />
-
-            <Text style={styles.modalLabel}>PILIH AVATAR IKON</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.emojiList}>
-              {AVATAR_ICON_KEYS.map((key) => (
-                <TouchableOpacity
-                  key={key}
-                  style={[styles.emojiBtn, joinAvatarInput === key && styles.emojiBtnSelected]}
-                  onPress={() => {
-                    hapticSelection();
-                    setJoinAvatarInput(key);
-                  }}
-                >
-                  <AppIcon
-                    name={key}
-                    size={18}
-                    color={joinAvatarInput === key ? (isDark ? '#090A0E' : '#FFFFFF') : colors.gold.champagne}
-                  />
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity
-                style={styles.cancelBtn}
-                onPress={() => setIsJoinModalOpen(false)}
-              >
-                <Text style={styles.cancelBtnText}>Batal</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.submitBtn}
-                onPress={handleJoinViaCode}
-              >
-                <Text style={styles.submitBtnText}>Gabung Sekarang</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1390,7 +1208,7 @@ export default function PocketsScreen() {
                   <View style={styles.createSharedInfoBox}>
                     <Users size={14} color={colors.gold.champagne} />
                     <Text style={styles.createSharedInfoText}>
-                      Kantong bersama dilengkapi kode unik undangan agar teman, pasangan, atau keluarga dapat ikut menyetor dana.
+                      Anggota dan setoran dicatat di perangkat ini.
                     </Text>
                   </View>
                 )}

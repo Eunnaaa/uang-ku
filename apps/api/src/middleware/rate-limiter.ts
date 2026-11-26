@@ -1,140 +1,34 @@
-import { Elysia } from 'elysia';
+import { createHmac } from 'node:crypto';
+import { isIP } from 'node:net';
+import { lt, sql } from 'drizzle-orm';
 import { env } from '../config/env';
-import { logger } from '../utils/logger';
+import { db, schema } from '../db/client';
 
-interface RateLimitRecord {
-  count: number;
-  resetAt: number;
+const normalize = (ip: string) => ip.startsWith('::ffff:') && isIP(ip.slice(7)) === 4 ? ip.slice(7) : ip;
+
+export function clientAddress(address: string | undefined, headers: Headers, trusted = env.TRUSTED_PROXY_IPS) {
+  if (!address) return 'unknown-peer';
+  const peer = normalize(address);
+  const forwarded = headers.get('x-real-ip');
+  return trusted.includes(peer) && forwarded && isIP(forwarded) ? normalize(forwarded) : peer;
 }
 
-// In-memory sliding window store with automatic expiration
-const inMemoryStore = new Map<string, RateLimitRecord>();
-
-let lastCleanup = Date.now();
-function pruneExpiredEntries() {
-  const now = Date.now();
-  if (now - lastCleanup > 30_000 || inMemoryStore.size > 2000) {
-    lastCleanup = now;
-    for (const [key, val] of inMemoryStore.entries()) {
-      if (now > val.resetAt) {
-        inMemoryStore.delete(key);
-      }
-    }
+export async function limitRequest(identity: string, limit: number, headers: Record<string, unknown>) {
+  const key = createHmac('sha256', env.JWT_SECRET).update(identity).digest('hex');
+  const t = schema.rateWindows;
+  const expiry = sql`now() + interval '1 minute'`;
+  const [row] = await db.insert(t).values({ key, hits: 1, expiresAt: expiry }).onConflictDoUpdate({
+    target: t.key,
+    set: { hits: sql`case when ${t.expiresAt} <= now() then 1 else least(${t.hits}+1, ${limit+1}) end`,
+      expiresAt: sql`case when ${t.expiresAt} <= now() then ${expiry} else ${t.expiresAt} end` },
+  }).returning();
+  if (Math.random() < 0.02) await db.delete(t).where(lt(t.expiresAt, sql`now()`));
+  const seconds = Math.max(1, Math.ceil((row.expiresAt.getTime()-Date.now())/1000));
+  headers['RateLimit-Remaining'] = String(Math.max(0, limit-row.hits));
+  headers['RateLimit-Limit'] = String(limit);
+  headers['RateLimit-Reset'] = String(seconds);
+  if (row.hits > limit) {
+    headers['Retry-After'] = String(seconds);
+    throw new Error('RATE_LIMIT_EXCEEDED');
   }
-}
-
-export interface RateLimitResult {
-  allowed: boolean;
-  limit: number;
-  remaining: number;
-  resetInSeconds: number;
-}
-
-/**
- * Check rate limit using Redis (if configured) or in-memory sliding counter
- */
-export async function checkRateLimit(
-  key: string,
-  maxRequests: number = 60,
-  windowMs: number = 60_000
-): Promise<RateLimitResult> {
-  const now = Date.now();
-
-  // 1. Try Upstash / Redis REST API if configured
-  if (env.REDIS_URL && env.REDIS_TOKEN) {
-    try {
-      const redisKey = `ratelimit:${key}`;
-      const res = await fetch(`${env.REDIS_URL}/pipeline`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${env.REDIS_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify([
-          ['INCR', redisKey],
-          ['PEXPIRE', redisKey, windowMs, 'NX'],
-          ['PTTL', redisKey],
-        ]),
-      });
-
-      if (res.ok) {
-        const json = await res.json();
-        const currentCount = Number(json[0]?.result || 1);
-        const pttl = Math.max(1, Number(json[2]?.result || windowMs));
-        const resetInSeconds = Math.ceil(pttl / 1000);
-        const remaining = Math.max(0, maxRequests - currentCount);
-
-        return {
-          allowed: currentCount <= maxRequests,
-          limit: maxRequests,
-          remaining,
-          resetInSeconds,
-        };
-      }
-    } catch (redisErr) {
-      logger.warn('Redis rate limit check failed, falling back to local memory store', undefined, redisErr as Error);
-    }
-  }
-
-  // 2. In-memory sliding window fallback
-  pruneExpiredEntries();
-
-  const record = inMemoryStore.get(key);
-  if (!record || now > record.resetAt) {
-    inMemoryStore.set(key, { count: 1, resetAt: now + windowMs });
-    return {
-      allowed: true,
-      limit: maxRequests,
-      remaining: maxRequests - 1,
-      resetInSeconds: Math.ceil(windowMs / 1000),
-    };
-  }
-
-  record.count += 1;
-  const resetInSeconds = Math.max(1, Math.ceil((record.resetAt - now) / 1000));
-  const remaining = Math.max(0, maxRequests - record.count);
-
-  return {
-    allowed: record.count <= maxRequests,
-    limit: maxRequests,
-    remaining,
-    resetInSeconds,
-  };
-}
-
-export function extractClientIp(headers: Record<string, string | undefined>): string {
-  return (
-    headers['cf-connecting-ip'] ||
-    headers['x-forwarded-for']?.split(',')[0].trim() ||
-    headers['x-real-ip'] ||
-    '127.0.0.1'
-  );
-}
-
-export function createRateLimiter(options: {
-  maxRequests: number;
-  windowMs: number;
-  keyPrefix: string;
-}) {
-  return new Elysia({ name: `rate-limiter-${options.keyPrefix}` }).onRequest(
-    async ({ request, set }) => {
-      const headersRecord: Record<string, string | undefined> = {};
-      request.headers.forEach((val, key) => {
-        headersRecord[key] = val;
-      });
-      const ip = extractClientIp(headersRecord);
-      const key = `${options.keyPrefix}:${ip}`;
-      const result = await checkRateLimit(key, options.maxRequests, options.windowMs);
-
-      set.headers['RateLimit-Limit'] = String(result.limit);
-      set.headers['RateLimit-Remaining'] = String(result.remaining);
-      set.headers['RateLimit-Reset'] = String(result.resetInSeconds);
-
-      if (!result.allowed) {
-        set.headers['Retry-After'] = String(result.resetInSeconds);
-        set.status = 429;
-        throw new Error('RATE_LIMIT_EXCEEDED');
-      }
-    }
-  );
 }

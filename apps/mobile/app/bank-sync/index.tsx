@@ -193,7 +193,8 @@ export default function BankSyncScreen() {
     try {
       const allTxs = await getLocalTransactions();
       const targetType = mutation.type === 'debit' ? 'expense' : 'income';
-      const candidates = allTxs.filter((t) => t.type === targetType);
+      const accountId = connections.find(c => c.id === mutation.connectionId)?.accountId;
+      const candidates = allTxs.filter((t) => t.type === targetType && t.accountId === accountId && !t.isBankVerified);
       candidates.sort((a, b) => {
         const aExact = a.amount === mutation.amount ? 1 : 0;
         const bExact = b.amount === mutation.amount ? 1 : 0;

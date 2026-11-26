@@ -40,7 +40,10 @@ import {
   Globe,
 } from 'lucide-react-native';
 import { AppIcon } from '../../src/components/AppIcon';
-import { mobileStorageService } from '../../src/services/storageService';
+import { mobileStorageService, receiptSource } from '../../src/services/storageService';
+import { keepPickedReceipt } from '../../src/services/receiptFiles';
+import { useAuth } from '../../src/auth/authContext';
+import { localMonthKey } from '../../src/db/month';
 import {
   formatRupiah,
   type CategoryModel,
@@ -72,6 +75,7 @@ import { hapticMedium, hapticSelection, hapticSuccess, hapticError, hapticLight 
 import { useToast } from '../../src/components/Toast';
 
 export default function NewTransactionScreen() {
+  const { user, token } = useAuth();
   const router = useRouter();
   const toast = useToast();
   const { colors, isDark } = useTheme();
@@ -90,7 +94,7 @@ export default function NewTransactionScreen() {
   );
   const [amount, setAmount] = useState<number>(0);
   const [transferFee, setTransferFee] = useState<number>(0);
-  const [selectedDaysAgo, setSelectedDaysAgo] = useState<number>(0);
+  const [selectedDaysAgo, setSelectedDaysAgo] = useState<number | null>(isEditMode ? null : 0);
   const [note, setNote] = useState<string>('');
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string>('');
@@ -140,6 +144,7 @@ export default function NewTransactionScreen() {
           setReceiptUri(existingTx.receiptUrl);
         }
         setSelectedAccountId(existingTx.accountId);
+        setSelectedPocketId(existingTx.pocketId ?? null);
         if (existingTx.destinationAccountId) {
           setSelectedDestAccountId(existingTx.destinationAccountId);
         }
@@ -183,17 +188,19 @@ export default function NewTransactionScreen() {
   }, [txType, params.editId, params.presetAmount, params.presetNote, params.presetAccountId, params.presetCategoryId]);
 
   useEffect(() => {
+    let current = true;
     if (selectedAccountId) {
       getLocalPockets(selectedAccountId).then((pockets) => {
-        // Only spending and bills pockets are usable for quick transactions
+        if (!current) return;
         const usable = pockets.filter((p) => !p.isLocked);
         setAccountPockets(usable);
-        setSelectedPocketId(null);
-      }).catch(() => setAccountPockets([]));
+        setSelectedPocketId(id => pockets.some(p => p.id === id) ? id : null);
+      }).catch(() => { if (current) setAccountPockets([]); });
     } else {
       setAccountPockets([]);
       setSelectedPocketId(null);
     }
+    return () => { current = false; };
   }, [selectedAccountId]);
 
   const handleApplyTemplate = async (tmpl: TemplateModel) => {
@@ -267,7 +274,7 @@ export default function NewTransactionScreen() {
       try {
         hapticMedium();
         const txDateObj = new Date();
-        if (selectedDaysAgo > 0) {
+        if (selectedDaysAgo !== null && selectedDaysAgo > 0) {
           txDateObj.setDate(txDateObj.getDate() - selectedDaysAgo);
         }
 
@@ -283,6 +290,8 @@ export default function NewTransactionScreen() {
 
         if (isEditMode && params.editId) {
           await updateLocalTransaction(params.editId, {
+            ...(selectedDaysAgo !== null && { transactionDate: txDateObj.toISOString() }),
+            pocketId: txType === 'expense' ? selectedPocketId : null,
             accountId: selectedAccountId,
             destinationAccountId: txType === 'transfer' ? selectedDestAccountId : null,
             categoryId: txType === 'transfer' ? null : selectedCategoryId,
@@ -381,7 +390,7 @@ export default function NewTransactionScreen() {
           const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
           const allTxs = await getLocalTransactions();
           const currentSpent = allTxs
-            .filter((t) => t.type === 'expense' && t.categoryId === selectedCategoryId && t.transactionDate.startsWith(monthKey))
+            .filter((t) => t.type === 'expense' && t.categoryId === selectedCategoryId && localMonthKey(new Date(t.transactionDate)) === monthKey)
             .reduce((sum, t) => sum + t.amount, 0);
 
           const projectedSpent = currentSpent + amount;
@@ -428,7 +437,7 @@ export default function NewTransactionScreen() {
               });
               if (!result.canceled && result.assets && result.assets.length > 0) {
                 hapticSuccess();
-                setReceiptUri(result.assets[0].uri);
+                if (user) setReceiptUri(await keepPickedReceipt(result.assets[0].uri, user.id));
               }
             } catch (err: any) {
               Alert.alert('Gagal Mengambil Foto', err.message);
@@ -451,7 +460,7 @@ export default function NewTransactionScreen() {
               });
               if (!result.canceled && result.assets && result.assets.length > 0) {
                 hapticSuccess();
-                setReceiptUri(result.assets[0].uri);
+                if (user) setReceiptUri(await keepPickedReceipt(result.assets[0].uri, user.id));
               }
             } catch (err: any) {
               Alert.alert('Gagal Memilih Foto', err.message);
@@ -514,7 +523,8 @@ export default function NewTransactionScreen() {
 
             return (
               <TouchableOpacity
-                key={t}
+                  key={t}
+                  disabled={isEditMode}
                 style={[
                   styles.segmentBtn,
                   isActive && { backgroundColor: activeColor },
@@ -871,7 +881,7 @@ export default function NewTransactionScreen() {
           {receiptUri ? (
             <View style={styles.receiptPreviewCard}>
               <View style={styles.receiptPreviewLeft}>
-                <Image source={{ uri: receiptUri }} style={styles.receiptThumbnail} />
+                <Image source={receiptSource(receiptUri, token)} style={styles.receiptThumbnail} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.receiptAttachedText}>Foto Bukti Terlampir</Text>
                   <Text style={styles.receiptSubText}>Tersimpan di perangkat lokal</Text>

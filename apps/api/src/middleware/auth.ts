@@ -1,30 +1,33 @@
 import { Elysia } from 'elysia';
 import crypto from 'crypto';
 import { env } from '../config/env';
+import { and, eq, gt, lte, sql } from 'drizzle-orm';
+import { db, schema } from '../db/client';
+import type { Tx } from '../db/ledger';
 
 export interface AuthContext {
   userId: string;
-  email?: string;
+  sessionId: string;
 }
 
 /**
  * Creates an HMAC-SHA256 signed JWT
  */
-export function createHs256Jwt(
-  payload: { sub: string; email?: string; [key: string]: any },
-  secret: string = env.JWT_SECRET,
-  expiresInSec: number = 86400 * 30
-): string {
+const sessionSeconds = 3600;
+
+export async function issueSession(owner: string, database: Tx | typeof db = db): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const exp = now + sessionSeconds;
+  await database.delete(schema.sessions).where(and(eq(schema.sessions.userId, owner), lte(schema.sessions.expiresAt, new Date())));
+  const [session] = await database.insert(schema.sessions).values({ userId: owner, expiresAt: new Date(exp * 1000) }).returning();
   const header = { alg: 'HS256', typ: 'JWT' };
   const fullPayload = {
-    ...payload,
-    iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + expiresInSec,
+    sub: owner, sid: session.id, iss: 'uangku:v3', iat: now, exp,
   };
   const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64url');
   const payloadB64 = Buffer.from(JSON.stringify(fullPayload)).toString('base64url');
   const signature = crypto
-    .createHmac('sha256', secret)
+    .createHmac('sha256', env.JWT_SECRET)
     .update(`${headerB64}.${payloadB64}`)
     .digest('base64url');
   return `${headerB64}.${payloadB64}.${signature}`;
@@ -36,7 +39,7 @@ export function createHs256Jwt(
 export function verifyHs256Jwt(
   token: string,
   secret: string = env.JWT_SECRET
-): { userId: string; email?: string } | null {
+): AuthContext | null {
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
@@ -48,7 +51,8 @@ export function verifyHs256Jwt(
       .update(`${headerB64}.${payloadB64}`)
       .digest('base64url');
 
-    if (signatureB64 !== expectedSig) {
+    if (signatureB64.length !== expectedSig.length ||
+        !crypto.timingSafeEqual(Buffer.from(signatureB64, 'ascii'), Buffer.from(expectedSig, 'ascii'))) {
       return null;
     }
 
@@ -56,87 +60,38 @@ export function verifyHs256Jwt(
     const payload = JSON.parse(payloadStr);
 
     // Check expiration if exp claim is present
-    if (payload.exp && Date.now() / 1000 > payload.exp) {
+    if (payload.iss !== 'uangku:v3' || !Number.isFinite(payload.exp) || Date.now() / 1000 >= payload.exp) {
       return null;
     }
 
-    if (!payload.sub) {
+    if (![payload.sub, payload.sid].every(id => typeof id === 'string' && /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id))) {
       return null;
     }
 
     return {
       userId: payload.sub,
-      email: payload.email,
+      sessionId: payload.sid,
     };
   } catch {
     return null;
   }
 }
 
+export function liveSession(user: AuthContext) {
+  return and(eq(schema.sessions.id, user.sessionId), eq(schema.sessions.userId, user.userId), gt(schema.sessions.expiresAt, sql`now()`));
+}
+
 export const authMiddleware = new Elysia({ name: 'auth-middleware' })
-  .derive({ as: 'scoped' }, async ({ headers, set }) => {
-    const authHeader = headers['authorization'];
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      // Default to dev demo user if in development and no token is passed
-      if (process.env.NODE_ENV === 'development') {
-        return {
-          user: {
-            userId: '00000000-0000-0000-0000-000000000001',
-            email: 'demo@uangku.id',
-          },
-        };
-      }
-      set.status = 401;
-      throw new Error('UNAUTHORIZED');
+  .derive({ as: 'scoped' }, async ({ headers, request, path }) => {
+    const token = headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+    const user = token && verifyHs256Jwt(token);
+    if (!user) throw new Error('UNAUTHORIZED');
+    const [session] = await db.select({ id: schema.sessions.id }).from(schema.sessions).where(liveSession(user));
+    if (!session) {
+      if (request.method !== 'DELETE' || path !== '/api/v1/auth/me') throw new Error('UNAUTHORIZED');
+      // Only confirm an already absent profile after a lost deletion response.
+      const [existing] = await db.select({ id: schema.profiles.id }).from(schema.profiles).where(eq(schema.profiles.id, user.userId));
+      if (existing) throw new Error('UNAUTHORIZED');
     }
-
-    const token = authHeader.replace('Bearer ', '').trim();
-
-    try {
-      const jwtSecret = env.JWT_SECRET;
-
-      // 1. If secret is configured, perform strict cryptographic verification
-      if (jwtSecret) {
-        const verified = verifyHs256Jwt(token, jwtSecret);
-        if (verified) {
-          return { user: verified };
-        }
-        // If strict verification failed in production, reject
-        if (process.env.NODE_ENV === 'production') {
-          set.status = 401;
-          throw new Error('UNAUTHORIZED');
-        }
-      }
-
-      // 2. Decode standard 3-part JWT payload for non-production environments
-      const parts = token.split('.');
-      if (parts.length === 3) {
-        const payloadStr = Buffer.from(parts[1], 'base64url').toString('utf-8');
-        const payload = JSON.parse(payloadStr);
-        if (payload.sub) {
-          return {
-            user: {
-              userId: payload.sub,
-              email: payload.email,
-            },
-          };
-        }
-      }
-
-      // 3. Fallback for custom dev tokens (strictly disallowed in production)
-      if (process.env.NODE_ENV !== 'production') {
-        return {
-          user: {
-            userId: token.length === 36 ? token : '00000000-0000-0000-0000-000000000001',
-            email: 'user@uangku.id',
-          },
-        };
-      }
-
-      set.status = 401;
-      throw new Error('UNAUTHORIZED');
-    } catch {
-      set.status = 401;
-      throw new Error('UNAUTHORIZED');
-    }
+    return { user };
   });

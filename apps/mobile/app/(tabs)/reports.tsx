@@ -1,3 +1,4 @@
+import { localMonthKey } from '../../src/db/month';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
@@ -46,13 +47,13 @@ import {
 } from 'lucide-react-native';
 import { AppIcon, GOAL_ICON_KEYS } from '../../src/components/AppIcon';
 import { CashFlowCircularChart } from '../../src/components/CashFlowCircularChart';
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
+import { shareExport } from '../../src/services/exportFiles';
 import { formatRupiah, generateTransactionsCsv, type CategoryModel } from '@uangku/contracts';
 import { colors, type ThemeColors } from '../../src/theme/colors';
 import { useTheme } from '../../src/theme/themeContext';
 import {
   getLocalTransactions,
+  getActiveUserId,
   getLocalBudgets,
   saveLocalBudget,
   getLocalCategories,
@@ -111,8 +112,8 @@ export default function ReportsScreen() {
 
   const loadReportData = useCallback(async () => {
     try {
-      const [allTx, localBudgets, cats, localGoals] = await Promise.all([
-        getLocalTransactions(),
+      const [monthlyTx, localBudgets, cats, localGoals] = await Promise.all([
+        getLocalTransactions({ month: localMonthKey(selectedDate) }),
         getLocalBudgets(),
         getLocalCategories('expense'),
         getLocalGoals(),
@@ -123,12 +124,6 @@ export default function ReportsScreen() {
       if (cats.length > 0 && !selectedBudgetCatId) {
         setSelectedBudgetCatId(cats[0].id);
       }
-
-      const year = selectedDate.getFullYear();
-      const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
-      const targetMonthKey = `${year}-${month}`;
-
-      const monthlyTx = allTx.filter((t) => t.transactionDate.startsWith(targetMonthKey));
 
       let income = 0;
       let expense = 0;
@@ -361,35 +356,19 @@ export default function ReportsScreen() {
 
   const handleExportCsv = async () => {
     hapticMedium();
+    const owner = getActiveUserId();
     try {
-      const allTx = await getLocalTransactions();
       const year = selectedDate.getFullYear();
       const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
       const targetMonthKey = `${year}-${month}`;
 
-      const monthlyTx = allTx.filter((t) => t.transactionDate.startsWith(targetMonthKey));
+      const monthlyTx = await getLocalTransactions({ month: targetMonthKey });
       if (monthlyTx.length === 0) {
         Alert.alert('Ekspor CSV', `Tidak ada transaksi pada bulan ${periodLabel} untuk diekspor.`);
         return;
       }
 
-      // Generate RFC 4180 CSV with UTF-8 BOM and OWASP sanitization
-      const csvContent = generateTransactionsCsv(monthlyTx);
-      const fileUri = `${FileSystem.cacheDirectory}UangKu_Laporan_${year}_${month}.csv`;
-
-      await FileSystem.writeAsStringAsync(fileUri, csvContent, {
-        encoding: FileSystem.EncodingType.UTF8,
-      });
-
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(fileUri, {
-          mimeType: 'text/csv',
-          dialogTitle: `Ekspor Laporan ${periodLabel}`,
-          UTI: 'public.comma-separated-values-text',
-        });
-      } else {
-        Alert.alert('Sukses', `Berkas tersimpan di: ${fileUri}`);
-      }
+      await shareExport(owner, generateTransactionsCsv(monthlyTx));
     } catch (err: any) {
       Alert.alert('Gagal Ekspor', err.message);
     }

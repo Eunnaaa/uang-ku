@@ -15,3 +15,4 @@ export * from './schemas/bankConnections';
 export * from './schemas/storage';
 export * from './utils/money';
 export * from './utils/csv';
+export * from './utils/statement';

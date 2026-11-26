@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 export const reportSummaryQuerySchema = z.object({
-  month: z.string().regex(/^\d{4}-\d{2}$/, 'Format bulan harus YYYY-MM (contoh: 2026-10)'),
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Format bulan harus YYYY-MM (contoh: 2026-10)'),
 });
 
 export const cashFlowQuerySchema = z.object({

@@ -43,9 +43,9 @@ export function AuthModal({ visible, onClose }: AuthModalProps) {
 
     let success = false;
     if (mode === 'login') {
-      success = await login(email.trim(), password.trim());
+      success = await login(email.trim(), password);
     } else {
-      success = await register(email.trim(), password.trim(), displayName.trim() || 'Pengguna UangKu');
+      success = await register(email.trim(), password, displayName.trim() || 'Pengguna UangKu');
     }
 
     setIsLoading(false);

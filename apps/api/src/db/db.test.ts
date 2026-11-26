@@ -1,20 +1,13 @@
-import { describe, it, expect, beforeAll, afterAll } from 'bun:test';
+import './test-guard';
+import { describe, it, expect, afterAll } from 'bun:test';
 import { db, schema } from './client';
 import { eq, sql } from 'drizzle-orm';
 
 describe('Database Integration & Schema Verification', () => {
-  const testUserId = '00000000-0000-4000-a000-000000000001';
+  const testUserId = crypto.randomUUID();
   let testAccountId: string;
   let testCategoryId: string;
   let testTransactionId: string;
-
-  beforeAll(async () => {
-    // Ensure clean state for test user
-    await db.delete(schema.transactions).where(eq(schema.transactions.userId, testUserId));
-    await db.delete(schema.accounts).where(eq(schema.accounts.userId, testUserId));
-    await db.delete(schema.categories).where(eq(schema.categories.userId, testUserId));
-    await db.delete(schema.profiles).where(eq(schema.profiles.id, testUserId));
-  });
 
   afterAll(async () => {
     // Cleanup test records
@@ -28,7 +21,7 @@ describe('Database Integration & Schema Verification', () => {
     const res = await db.execute(sql`SELECT current_database() as db_name, current_user as db_user`);
     expect(res).toBeDefined();
     expect(res.length).toBeGreaterThan(0);
-    expect(res[0].db_name).toBe('uangku');
+    expect(res[0].db_name).toBe(new URL(process.env.TEST_DATABASE_URL!).pathname.slice(1));
   });
 
   it('inserts and retrieves user profile with default currency IDR', async () => {

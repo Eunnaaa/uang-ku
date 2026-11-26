@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
-    "test": "turbo run test",
+    "test": "bun run test-isolated.ts",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "api:dev": "bun --cwd apps/api dev",
@@ -17,6 +17,9 @@
     "mobile:tunnel": "bun --cwd apps/mobile tunnel",
     "mobile:ios": "bun --cwd apps/mobile ios",
     "mobile:android": "bun --cwd apps/mobile android"
+  },
+  "overrides": {
+    "node-forge": "1.4.4"
   },
   "devDependencies": {
     "turbo": "^2.11.7",

@@ -1,9 +1,34 @@
-import { describe, it, expect, afterAll } from 'bun:test';
+import './db/test-guard';
+import { describe, it, expect } from 'bun:test';
 import app from './index';
+import { issueSession } from './middleware/auth';
+import { DEFAULT_USER_ID } from './db/seed';
 import { db, schema } from './db/client';
-import { notInArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
+
+const fixtureAuth = `Bearer ${await issueSession(DEFAULT_USER_ID)}`;
 
 describe('UangKu API Endpoints & Features', () => {
+  it('commits custom-category expenses and reverses exactly the funded portion of an overspent pocket', async () => {
+    const call = async (path: string, body?: unknown, method = body ? 'POST' : 'GET') => {
+      const res = await app.handle(new Request(`http://localhost/api/v1/${path}`, {method,
+        headers:{Authorization:fixtureAuth,'Content-Type':'application/json'},body:body ? JSON.stringify(body) : undefined}));
+      expect(res.status).toBe(200);
+      return (await res.json()).data;
+    };
+    const a = await call('accounts',{name:'Dompet regresi',type:'cash',initialBalance:100000});
+    const cat = await call('categories',{name:'Kategori regresi',type:'expense'});
+    const pocket = await call(`accounts/${a.id}/pockets`,{name:'Alokasi',type:'spending',initialAllocation:10000});
+    const input = {accountId:a.id,pocketId:pocket.id,categoryId:cat.id,amount:20000,type:'expense',
+      clientId:crypto.randomUUID(),transactionDate:new Date().toISOString()};
+    const tx = await call('transactions',input);
+    expect((await call('transactions',input)).id).toBe(tx.id);
+    expect(await db.select().from(schema.transactions).where(eq(schema.transactions.id,tx.id))).toMatchObject([{pocketDebit:10000,categoryId:cat.id}]);
+    expect((await call('accounts')).find((w: {id:string})=>w.id===a.id).currentBalance).toBe(80000);
+    await call(`transactions/${tx.id}`,undefined,'DELETE');
+    expect((await call(`accounts/${a.id}/pockets`)).totalAllocated).toBe(10000);
+    expect((await call('accounts')).find((w: {id:string})=>w.id===a.id).currentBalance).toBe(100000);
+  });
   it('GET /health returns status ok', async () => {
     const res = await app.handle(new Request('http://localhost/health'));
     expect(res.status).toBe(200);
@@ -23,7 +48,7 @@ describe('UangKu API Endpoints & Features', () => {
   it('GET /api/v1/accounts returns user accounts with authorization header', async () => {
     const res = await app.handle(
       new Request('http://localhost/api/v1/accounts', {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(res.status).toBe(200);
@@ -40,7 +65,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           name: 'Tabungan Mandiri',
@@ -60,7 +85,7 @@ describe('UangKu API Endpoints & Features', () => {
   it('GET /api/v1/categories returns expense and income categories', async () => {
     const res = await app.handle(
       new Request('http://localhost/api/v1/categories', {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(res.status).toBe(200);
@@ -72,7 +97,7 @@ describe('UangKu API Endpoints & Features', () => {
   it('GET /api/v1/transactions returns transaction list with pagination', async () => {
     const res = await app.handle(
       new Request('http://localhost/api/v1/transactions?limit=10', {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(res.status).toBe(200);
@@ -91,7 +116,7 @@ describe('UangKu API Endpoints & Features', () => {
       await app.handle(
         new Request('http://localhost/api/v1/transactions', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer demo-token' },
+          headers: { 'Content-Type': 'application/json', Authorization: fixtureAuth },
           body: JSON.stringify({
             accountId: 'a1000000-0000-0000-0000-000000000001',
             categoryId: 'c1000000-0000-0000-0000-000000000001',
@@ -107,7 +132,7 @@ describe('UangKu API Endpoints & Features', () => {
     // 2. Query with limit=1 to get nextCursor
     const page1Res = await app.handle(
       new Request('http://localhost/api/v1/transactions?limit=1', {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     const page1Body = await page1Res.json();
@@ -118,7 +143,7 @@ describe('UangKu API Endpoints & Features', () => {
     // 3. Query next page using cursor
     const page2Res = await app.handle(
       new Request(`http://localhost/api/v1/transactions?limit=1&cursor=${encodeURIComponent(page1Body.meta.nextCursor)}`, {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     const page2Body = await page2Res.json();
@@ -128,7 +153,7 @@ describe('UangKu API Endpoints & Features', () => {
     // 4. Query with date range
     const filterRes = await app.handle(
       new Request('http://localhost/api/v1/transactions?startDate=2026-09-01T00:00:00.000Z&endDate=2026-09-02T23:59:59.000Z', {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     const filterBody = await filterRes.json();
@@ -141,7 +166,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           accountId: 'a1000000-0000-0000-0000-000000000001',
@@ -168,7 +193,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           accountId: 'a1000000-0000-0000-0000-000000000001',
@@ -190,7 +215,7 @@ describe('UangKu API Endpoints & Features', () => {
   it('GET /api/v1/reports/summary returns calculated financial cash flow', async () => {
     const res = await app.handle(
       new Request('http://localhost/api/v1/reports/summary?month=2026-10', {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(res.status).toBe(200);
@@ -205,7 +230,7 @@ describe('UangKu API Endpoints & Features', () => {
   it('GET /api/v1/reports/expenses-by-category returns categorized ranking', async () => {
     const res = await app.handle(
       new Request('http://localhost/api/v1/reports/expenses-by-category?month=2026-10', {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(res.status).toBe(200);
@@ -243,7 +268,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify(mutationPayload),
       })
@@ -258,7 +283,7 @@ describe('UangKu API Endpoints & Features', () => {
   it('GET /api/v1/sync/pull returns incremental transaction sync updates', async () => {
     const res = await app.handle(
       new Request('http://localhost/api/v1/sync/pull', {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(res.status).toBe(200);
@@ -276,7 +301,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           accountId: 'a1000000-0000-0000-0000-000000000001',
@@ -292,10 +317,10 @@ describe('UangKu API Endpoints & Features', () => {
     const created = await createRes.json();
     const txId = created.data.id;
 
-    // User B tries to access User A's transaction with token 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+    const [other] = await db.insert(schema.profiles).values({ id: crypto.randomUUID() }).returning();
     const res = await app.handle(
       new Request(`http://localhost/api/v1/transactions/${txId}`, {
-        headers: { Authorization: 'Bearer ffffffff-ffff-ffff-ffff-ffffffffffff' },
+        headers: { Authorization: `Bearer ${await issueSession(other.id)}` },
       })
     );
     expect(res.status).toBe(404); // RESOURCE_NOT_FOUND to avoid leaking transaction existence
@@ -308,7 +333,7 @@ describe('UangKu API Endpoints & Features', () => {
     const res = await app.handle(
       new Request('http://localhost/api/v1/categories/c1000000-0000-0000-0000-000000000001', {
         method: 'DELETE',
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(res.status).toBe(403);
@@ -339,7 +364,7 @@ describe('UangKu API Endpoints & Features', () => {
   it('GET /api/v1/templates returns list of 1-tap transaction templates', async () => {
     const res = await app.handle(
       new Request('http://localhost/api/v1/templates', {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(res.status).toBe(200);
@@ -355,7 +380,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           name: 'Makan Siang Nasi Padang',
@@ -379,7 +404,7 @@ describe('UangKu API Endpoints & Features', () => {
     const useRes = await app.handle(
       new Request(`http://localhost/api/v1/templates/${created.id}/use`, {
         method: 'POST',
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(useRes.status).toBe(200);
@@ -390,7 +415,7 @@ describe('UangKu API Endpoints & Features', () => {
     const delRes = await app.handle(
       new Request(`http://localhost/api/v1/templates/${created.id}`, {
         method: 'DELETE',
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(delRes.status).toBe(200);
@@ -402,7 +427,7 @@ describe('UangKu API Endpoints & Features', () => {
     // 1. List budgets
     const listRes = await app.handle(
       new Request('http://localhost/api/v1/budgets', {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(listRes.status).toBe(200);
@@ -412,7 +437,7 @@ describe('UangKu API Endpoints & Features', () => {
     // 2. Summary
     const summaryRes = await app.handle(
       new Request('http://localhost/api/v1/budgets/summary?month=2026-10', {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(summaryRes.status).toBe(200);
@@ -432,7 +457,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           name: 'Dana Liburan Jepang',
@@ -455,7 +480,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({ amount: 1000000 }),
       })
@@ -472,7 +497,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           accountId: 'a1000000-0000-0000-0000-000000000001',
@@ -493,7 +518,7 @@ describe('UangKu API Endpoints & Features', () => {
     const triggerRes = await app.handle(
       new Request(`http://localhost/api/v1/recurring-rules/${rule.id}/trigger`, {
         method: 'POST',
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(triggerRes.status).toBe(200);
@@ -532,7 +557,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           name: 'Budget Makan Siang',
@@ -552,7 +577,7 @@ describe('UangKu API Endpoints & Features', () => {
     // 2. Query account pockets
     const getRes = await app.handle(
       new Request(`http://localhost/api/v1/accounts/${accountId}/pockets`, {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(getRes.status).toBe(200);
@@ -566,7 +591,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           accountId,
@@ -590,7 +615,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           accountId,
@@ -611,7 +636,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           connectionId: connection.id,
@@ -631,7 +656,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           action: 'create_new',
@@ -644,14 +669,14 @@ describe('UangKu API Endpoints & Features', () => {
     expect(reconcileBody.reconciliationStatus).toBe('created_as_new');
     expect(reconcileBody.matchedTransactionId).toBeDefined();
 
-    // 4. Reconcile another mutation by matching to the newly created transaction
+    // A second bank line cannot reuse the transaction already assigned to the first.
     const secondMutationId = importBody.mutations[1].id;
     const matchRes = await app.handle(
       new Request(`http://localhost/api/v1/bank-mutations/${secondMutationId}/reconcile`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           action: 'match',
@@ -659,16 +684,20 @@ describe('UangKu API Endpoints & Features', () => {
         }),
       })
     );
-    expect(matchRes.status).toBe(200);
-    const matchBody = (await matchRes.json()).data;
-    expect(matchBody.reconciliationStatus).toBe('matched');
-    expect(matchBody.matchedTransactionId).toBe(reconcileBody.matchedTransactionId);
+    expect(matchRes.status).toBe(409);
+    const ignore = await app.handle(new Request(`http://localhost/api/v1/bank-mutations/${secondMutationId}/reconcile`, {
+      method: 'POST', headers: { Authorization: fixtureAuth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'ignore' }),
+    }));
+    expect(ignore.status).toBe(200);
+    const [ignored] = await db.select().from(schema.bankMutations).where(eq(schema.bankMutations.id, secondMutationId));
+    expect(ignored).toMatchObject({ reconciliationStatus: 'ignored', matchedTransactionId: null });
 
     // 5. Delete bank connection & verify cascading removal
     const deleteConnRes = await app.handle(
       new Request(`http://localhost/api/v1/bank-connections/${connection.id}`, {
         method: 'DELETE',
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(deleteConnRes.status).toBe(200);
@@ -685,7 +714,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           name: 'Kantong Kopi & Snack',
@@ -705,7 +734,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           accountId,
@@ -726,7 +755,7 @@ describe('UangKu API Endpoints & Features', () => {
     // 3. Verify pocket balance was deducted (200000 - 45000 = 155000)
     const checkPocketRes = await app.handle(
       new Request(`http://localhost/api/v1/accounts/${accountId}/pockets`, {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     const pocketsList = (await checkPocketRes.json()).data.pockets;
@@ -737,14 +766,14 @@ describe('UangKu API Endpoints & Features', () => {
     const deleteTxRes = await app.handle(
       new Request(`http://localhost/api/v1/transactions/${tx.id}`, {
         method: 'DELETE',
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(deleteTxRes.status).toBe(200);
 
     const recheckPocketRes = await app.handle(
       new Request(`http://localhost/api/v1/accounts/${accountId}/pockets`, {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     const finalPocketsList = (await recheckPocketRes.json()).data.pockets;
@@ -761,7 +790,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: fixtureAuth,
         },
         body: JSON.stringify({
           name: 'Patungan Liburan Bali',
@@ -779,12 +808,18 @@ describe('UangKu API Endpoints & Features', () => {
     expect(pocket.inviteCode).toBeDefined();
 
     // 2. Another user joins via invite code
+    const [guest] = await db.insert(schema.profiles).values({id:crypto.randomUUID()}).returning();
+    const guestAuth = `Bearer ${await issueSession(guest.id)}`;
+    const history = () => app.handle(new Request(`http://localhost/api/v1/pockets/${pocket.id}/contributions`, {
+      headers: { Authorization: guestAuth },
+    }));
+    expect((await history()).status).toBe(404);
     const joinRes = await app.handle(
       new Request('http://localhost/api/v1/pockets/join', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: guestAuth,
         },
         body: JSON.stringify({
           inviteCode: pocket.inviteCode,
@@ -803,7 +838,7 @@ describe('UangKu API Endpoints & Features', () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer demo-token',
+          Authorization: guestAuth,
         },
         body: JSON.stringify({
           memberId: joinData.member.id,
@@ -817,45 +852,25 @@ describe('UangKu API Endpoints & Features', () => {
     const contribData = (await contribRes.json()).data;
     expect(contribData.pocket.allocatedBalance).toBe(750000); // 500k + 250k
     expect(contribData.member.totalContributed).toBe(250000);
+    expect((await history()).status).toBe(200);
 
     // 4. Retrieve contributions history
     const historyRes = await app.handle(
       new Request(`http://localhost/api/v1/pockets/${pocket.id}/contributions`, {
-        headers: { Authorization: 'Bearer demo-token' },
+        headers: { Authorization: fixtureAuth },
       })
     );
     expect(historyRes.status).toBe(200);
     const historyData = (await historyRes.json()).data;
     expect(historyData.contributions.length).toBeGreaterThan(0);
     expect(historyData.totalContributions).toBeGreaterThanOrEqual(250000);
+    expect(joinData.pocket.inviteCode).toBeNull();
+    const removed = await app.handle(new Request(`http://localhost/api/v1/pockets/${pocket.id}/members/${joinData.member.id}`,
+      { method: 'DELETE', headers: { Authorization: fixtureAuth } }));
+    expect(removed.status).toBe(200);
+    expect((await history()).status).toBe(404);
+    const [changed] = await db.select().from(schema.pockets).where(eq(schema.pockets.id,pocket.id));
+    expect(changed.inviteCode).toBeNull();
   });
 
-  afterAll(async () => {
-    try {
-      await db.delete(schema.transactions);
-      await db.delete(schema.bankMutations);
-      await db.delete(schema.bankConnections);
-      await db.delete(schema.pocketContributions);
-      await db.delete(schema.pocketMembers);
-      await db.delete(schema.pockets);
-      await db.delete(schema.recurringRules);
-      await db.delete(schema.budgets);
-      await db.delete(schema.financialGoals);
-      await db.delete(schema.transactionTemplates);
-      await db.delete(schema.syncEvents);
-      await db.delete(schema.idempotencyKeys);
-      await db
-        .delete(schema.accounts)
-        .where(
-          notInArray(schema.accounts.id, [
-            'a1000000-0000-0000-0000-000000000001',
-            'a2000000-0000-0000-0000-000000000002',
-            'a3000000-0000-0000-0000-000000000003',
-          ])
-        );
-      await db.update(schema.accounts).set({ initialBalance: 0 });
-    } catch (e) {
-      console.warn('Test cleanup error:', e);
-    }
-  });
 });

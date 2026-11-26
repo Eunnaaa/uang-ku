@@ -24,9 +24,9 @@ export const updatePocketSchema = z.object({
 });
 
 export const pocketTransferSchema = z.object({
-  accountId: z.string().uuid('ID Akun tidak valid'),
-  sourcePocketId: z.string().uuid('ID Kantong asal tidak valid').nullable(),
-  destinationPocketId: z.string().uuid('ID Kantong tujuan tidak valid').nullable(),
+  accountId: z.guid('ID Akun tidak valid'),
+  sourcePocketId: z.guid('ID Kantong asal tidak valid').nullable(),
+  destinationPocketId: z.guid('ID Kantong tujuan tidak valid').nullable(),
   amount: z.number().int('Nominal harus bilangan bulat').positive('Nominal transfer alokasi harus lebih dari 0'),
 }).refine((data) => data.sourcePocketId !== data.destinationPocketId, {
   message: 'Kantong asal dan kantong tujuan alokasi tidak boleh sama',
@@ -40,7 +40,7 @@ export const joinPocketSchema = z.object({
 });
 
 export const pocketContributionSchema = z.object({
-  memberId: z.string().uuid('ID Anggota tidak valid').optional(),
+  memberId: z.guid('ID Anggota tidak valid').optional(),
   memberName: z.string().trim().min(1, 'Nama anggota wajib diisi'),
   memberAvatar: z.string().max(20).optional().default('user'),
   amount: z.number().int('Nominal harus bilangan bulat').positive('Nominal setoran harus lebih dari 0'),

@@ -39,9 +39,9 @@ import {
   hapticLight,
 } from '../../src/theme/haptics';
 import { useToast } from '../../src/components/Toast';
+import { pinState, savePin, verifyPin } from '../../src/auth/pin';
 
 const BIOMETRIC_PREF_KEY = 'uangku_biometric_enabled';
-const PIN_STORAGE_KEY = 'uangku_app_pin_hash';
 const PRIVACY_MASK_KEY = 'uangku_privacy_mask_balance';
 const AUTOLOCK_KEY = 'uangku_autolock_timeout';
 
@@ -124,6 +124,8 @@ export default function SecurityCenterScreen() {
         hapticLight();
       }
     } else {
+      const result = await LocalAuthentication.authenticateAsync({ promptMessage: 'Verifikasi untuk menonaktifkan kunci' }).catch(() => null);
+      if (!result?.success) return;
       hapticSelection();
       await SecureStore.setItemAsync(BIOMETRIC_PREF_KEY, '0');
       setBiometricEnabled(false);
@@ -151,9 +153,17 @@ export default function SecurityCenterScreen() {
   };
 
   // Change PIN Keypad Handlers
-  const handleStartChangePin = () => {
+  const handleStartChangePin = async () => {
     hapticMedium();
-    setPinStep('current');
+    try {
+      const status = await pinState();
+      if (status.requiresLogin) return;
+      if (!status.hasPin && !(await LocalAuthentication.authenticateAsync({ promptMessage: 'Verifikasi untuk membuat PIN' })).success) return;
+      setPinStep(status.hasPin ? 'current' : 'new');
+    } catch {
+      toast.showError('Verifikasi gagal', 'PIN belum diubah.');
+      return;
+    }
     setCurrentPinAttempt('');
     setNewPinAttempt('');
     setConfirmPinAttempt('');
@@ -170,14 +180,15 @@ export default function SecurityCenterScreen() {
       if (next.length <= 6) {
         setCurrentPinAttempt(next);
         if (next.length === 6) {
-          const savedPin = (await SecureStore.getItemAsync(PIN_STORAGE_KEY)) || '123456';
-          if (next === savedPin) {
+          const result = await verifyPin(next).catch(() => null);
+          if (result?.ok) {
             hapticSuccess();
             setPinStep('new');
           } else {
             hapticError();
             setCurrentPinAttempt('');
-            setPinErrorText('PIN saat ini tidak cocok. Silakan coba lagi.');
+            if (result?.requiresLogin) setIsPinModalOpen(false);
+            setPinErrorText(result?.seconds ? `Coba lagi dalam ${result.seconds} detik.` : 'PIN tidak dapat diverifikasi.');
           }
         }
       }
@@ -197,7 +208,11 @@ export default function SecurityCenterScreen() {
         if (next.length === 6) {
           if (next === newPinAttempt) {
             hapticSuccess();
-            await SecureStore.setItemAsync(PIN_STORAGE_KEY, next);
+            try { await savePin(next); }
+            catch { setPinErrorText('PIN tidak tersimpan. Coba lagi.'); setConfirmPinAttempt(''); return; }
+            setCurrentPinAttempt('');
+            setNewPinAttempt('');
+            setConfirmPinAttempt('');
             setIsPinModalOpen(false);
             toast.showSuccess('PIN Diperbarui', 'PIN 6-digit baru Anda berhasil disimpan aman.');
           } else {
@@ -256,9 +271,9 @@ export default function SecurityCenterScreen() {
             <ShieldCheck size={28} color={colors.gold.champagne} />
           </View>
           <View style={styles.bannerInfo}>
-            <Text style={styles.bannerTitle}>Proteksi Perangkat Aktif</Text>
+            <Text style={styles.bannerTitle}>{biometricEnabled ? 'Kunci aplikasi aktif' : 'Kunci aplikasi nonaktif'}</Text>
             <Text style={styles.bannerDesc}>
-              Database SQLite lokal dan PIN Anda dienkripsi dengan standar Secure Enclave. Data finansial tersimpan offline di ponsel Anda.
+              Data keuangan disimpan di perangkat. Kunci aplikasi membatasi akses saat perangkat digunakan orang lain.
             </Text>
           </View>
         </View>
@@ -386,13 +401,13 @@ export default function SecurityCenterScreen() {
           <View style={styles.checkItem}>
             <CheckCircle2 size={14} color="#10B981" />
             <Text style={styles.checkItemText}>
-              Enkripsi Perangkat Keras Secure Enclave & Keystore
+              Kredensial disimpan di penyimpanan aman perangkat
             </Text>
           </View>
           <View style={styles.checkItem}>
             <CheckCircle2 size={14} color="#10B981" />
             <Text style={styles.checkItemText}>
-              Database SQLite Lokal Bersandbox Aman (No Cloud Leaks)
+              Catatan lokal disimpan dalam penyimpanan privat aplikasi
             </Text>
           </View>
           <View style={styles.checkItem}>

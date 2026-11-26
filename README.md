@@ -54,7 +54,7 @@ UangKu/
 
 ### 1. Instalasi Dependensi
 ```bash
-bun install
+bun install --frozen-lockfile
 ```
 
 ### 2. Menjalankan Backend API (ElysiaJS)
@@ -73,12 +73,35 @@ bun run --cwd apps/mobile start
 
 ### 4. Menjalankan Pengujian & Typecheck
 ```bash
-# Menjalankan unit tests (@uangku/contracts money & validation)
+# Dari root, dengan Bun 1.3.14 dan PostgreSQL lokal terpasang (pg_config, initdb, pg_ctl).
 bun run test
 
 # Menjalankan TypeScript typecheck di seluruh monorepo
 bun run typecheck
 ```
+
+`bun run test` membuat cluster PostgreSQL baru di direktori sementara, menjalankan migrasi dan seed, lalu membuang cluster itu. Runner tidak memakai `DATABASE_URL` aplikasi. `bun test` langsung tidak diizinkan membuka database integrasi tanpa konfigurasi tes. Tes perangkat memakai SQLite di memori, bukan simulator atau ponsel pengguna.
+
+### Sebelum memperbarui instalasi lama
+
+- Cadangkan PostgreSQL dan berkas struk. Jalankan `bun run --cwd apps/api db:migrate` pada database tujuan setelah memeriksa koneksinya. Migrasi menolak email duplikat; jangan hapus profil untuk memaksanya lolos.
+- Siapkan `JWT_SECRET` (atau `SUPABASE_JWT_SECRET`) privat minimal 32 karakter. Rilis API sebelum aplikasi. Token sesi lama harus diganti lewat login kembali; kata sandi lama ditingkatkan ke Argon2id saat login berhasil. Logout tidak menghapus antrean offline.
+- Simpan `STORAGE_LOCAL_DIR` di volume privat yang persisten. Untuk S3/R2 gunakan bucket privat, cabut akses publik lama dan invalidasi cache CDN. Jangan sajikan direktori unggahan melalui static server.
+- Struk lokal lama berada di direktori datar tanpa identitas pemilik. Akses HTTP baru tidak membacanya. Cocokkan pemilik dari sumber tepercaya sebelum memindahkannya ke `STORAGE_LOCAL_DIR/receipts/<userId>/`. Jika lokasi asal berbeda, tetapkan `STORAGE_LEGACY_DIR` ke direktori struk lama. Selama masih ada struk lama yang belum direkonsiliasi, API menolak konfirmasi penghapusan akun.
+- Cadangan `.ukbak` menyimpan data dan antrean milik satu akun, bukan salinan biner foto. Rilis ini tidak dapat merekonstruksi baris yang telanjur terhapus atau menentukan transaksi mana yang pernah menerima konfirmasi palsu. Bandingkan ekspor lokal dan cadangan server sebelum rilis ke pengguna lama.
+
+Untuk instalasi Compose, tetapkan `POSTGRES_PASSWORD` dan `JWT_SECRET` melalui pengelola rahasia. PostgreSQL hanya dapat diakses melalui jaringan Compose. Mengubah `POSTGRES_PASSWORD` tidak mengganti kata sandi role pada volume PostgreSQL lama; koordinasikan perubahan kredensial tanpa menghapus volume. Sebelum mengganti kontainer lama, salin struk dari penyimpanan sebelumnya ke volume `receipt_data` dan periksa bahwa struk dapat dibaca.
+
+Setelah memeriksa cadangan dan koneksi tujuan, jalankan migrasi sebagai langkah terpisah dengan **image baru**, sebelum mengganti API: `docker compose run --rm api bun dist/migrate.js`. Migrasi `0004` menyimpan porsi pengeluaran yang dibiayai kantong; `0005` menambah metadata dompet. Jalankan API baru sebelum memperbarui klien. Porsi debit kantong lama tidak dapat disimpulkan dari nominal pengeluaran: edit alokasi dan pembatalannya ditolak sampai direkonsiliasi dengan catatan yang tepercaya.
+
+Sinkronisasi membawa transaksi, dompet (termasuk dompet kosong), dan kategori ke perangkat kedua. Cadangan tetap diperlukan untuk data yang hanya dikelola di perangkat, termasuk anggota patungan, riwayat setoran, dan mutasi bank lokal. Kantong patungan di aplikasi seluler tidak menawarkan undangan lintas perangkat.
+
+### Pembaruan keamanan: migrasi 0006
+
+1. Cadangkan PostgreSQL dan volume struk. Hentikan penulisan dari API lama saat menerapkan `0006_security_boundaries`. Migrasi menolak tautan rekonsiliasi lama yang duplikat atau tidak cocok dengan pemilik, dompet, atau status. Selidiki catatan itu, jangan menghapus transaksi untuk meloloskan migrasi.
+2. Jalankan API dan aplikasi baru sebagai satu pembaruan terkoordinasi. Token lama tidak berlaku. Tiap login menerbitkan sesi perangkat selama satu jam; masuk kembali dari kartu profil untuk melanjutkan sinkronisasi setelah kedaluwarsa. Pencatatan offline dan antrean lokal tetap tersedia. Klien lama tidak mendukung konfirmasi kata sandi untuk hapus akun. Pembaruan mobile memerlukan **build native baru** karena memakai `expo-crypto`, bukan hanya pembaruan JavaScript.
+3. Tempatkan API di belakang HTTPS. Compose mengikat port API ke loopback host. Jika menggunakan reverse proxy, tetapkan `TRUSTED_PROXY_IPS` hanya ke alamat peer proxy yang benar-benar terlihat oleh API; proxy wajib **menimpa** `X-Real-IP`. Tanpa konfigurasi itu, pembatas memakai IP koneksi langsung. Penghitung per IP dan akun dibagikan antarinstans melalui PostgreSQL. Jika builder sebelumnya menggunakan cache bersama, tinjau akses historis ke cache: `.dockerignore` baru tidak membersihkan cache lama.
+4. Terbitkan ulang undangan yang masih dibutuhkan. Satu kode berlaku untuk satu kali bergabung, maksimal 24 jam. Menerbitkan kode baru atau mencabut anggota membatalkan kode lama. Unggahan struk dibatasi 5 MiB per berkas, 100 berkas dan 100 MiB per akun, termasuk berkas lama. Berkas lama yang melebihi kuota tidak dihapus otomatis.
 
 ---
 

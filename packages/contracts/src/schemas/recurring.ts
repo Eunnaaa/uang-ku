@@ -5,8 +5,8 @@ import type { RecurringFrequency } from '../types/models';
 export const recurringFrequencyEnum = z.enum(['daily', 'weekly', 'biweekly', 'monthly', 'yearly']);
 
 export const createRecurringRuleSchema = z.object({
-  accountId: z.string().uuid({ message: 'Account ID harus berupa UUID valid' }),
-  categoryId: z.string().uuid({ message: 'Category ID harus berupa UUID valid' }).optional().nullable(),
+  accountId: z.guid({ message: 'Account ID harus berupa UUID valid' }),
+  categoryId: z.guid({ message: 'Category ID harus berupa UUID valid' }).optional().nullable(),
   type: transactionTypeEnum.refine((val) => val === 'income' || val === 'expense', {
     message: 'Tipe transaksi berulang harus berupa income atau expense',
   }),

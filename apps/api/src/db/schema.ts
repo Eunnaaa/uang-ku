@@ -1,17 +1,29 @@
-import { pgTable, uuid, varchar, bigint, boolean, timestamp, integer, jsonb, text, index, check } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, bigint, boolean, timestamp, integer, jsonb, text, index, uniqueIndex, check } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 // 1. Profiles Table
 export const profiles = pgTable('profiles', {
   id: uuid('id').primaryKey(),
   displayName: varchar('display_name', { length: 100 }),
-  email: varchar('email', { length: 255 }),
+  email: varchar('email', { length: 255 }).unique(),
   passwordHash: text('password_hash'),
   defaultCurrency: varchar('default_currency', { length: 3 }).default('IDR').notNull(),
   timezone: varchar('timezone', { length: 50 }).default('Asia/Jakarta').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const sessions = pgTable('auth_sessions', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  userId: uuid('user_id').references(() => profiles.id, { onDelete: 'cascade' }).notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+}, t => [index('sessions_owner_expiry').on(t.userId, t.expiresAt)]);
+
+export const rateWindows = pgTable('rate_windows', {
+  key: text('key').primaryKey(),
+  hits: integer('hits').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+}, t => [index('rate_windows_expiry').on(t.expiresAt)]);
 
 // 2. Accounts Table
 export const accounts = pgTable('accounts', {
@@ -21,6 +33,10 @@ export const accounts = pgTable('accounts', {
   type: varchar('type', { length: 20 }).notNull(), // 'cash' | 'bank' | 'e_wallet' | 'other'
   currency: varchar('currency', { length: 3 }).default('IDR').notNull(),
   initialBalance: bigint('initial_balance', { mode: 'number' }).default(0).notNull(),
+  reservedAmount: bigint('reserved_amount', { mode: 'number' }).default(0).notNull(),
+  color: varchar('color', { length: 20 }).default('#D4AF37').notNull(),
+  isHidden: boolean('is_hidden').default(false).notNull(),
+  sortOrder: integer('sort_order').default(0).notNull(),
   isDefault: boolean('is_default').default(false).notNull(),
   isArchived: boolean('is_archived').default(false).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -58,6 +74,7 @@ export const pockets = pgTable('pockets', {
   sortOrder: integer('sort_order').default(0).notNull(),
   isShared: boolean('is_shared').default(false).notNull(),
   inviteCode: varchar('invite_code', { length: 20 }),
+  inviteExpiresAt: timestamp('invite_expires_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
@@ -73,6 +90,7 @@ export const pocketMembers = pgTable('pocket_members', {
   name: varchar('name', { length: 50 }).notNull(),
   avatarEmoji: varchar('avatar_emoji', { length: 20 }).default('user'),
   role: varchar('role', { length: 20 }).default('contributor').notNull(), // 'owner' | 'contributor' | 'viewer'
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
   totalContributed: bigint('total_contributed', { mode: 'number' }).default(0).notNull(),
   joinedAt: timestamp('joined_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
@@ -100,6 +118,7 @@ export const transactions = pgTable('transactions', {
   destinationAccountId: uuid('destination_account_id').references(() => accounts.id),
   categoryId: uuid('category_id').references(() => categories.id),
   pocketId: uuid('pocket_id').references(() => pockets.id, { onDelete: 'set null' }),
+  pocketDebit: bigint('pocket_debit', { mode: 'number' }),
   type: varchar('type', { length: 20 }).notNull(), // 'income' | 'expense' | 'transfer'
   amount: bigint('amount', { mode: 'number' }).notNull(),
   transferFee: bigint('transfer_fee', { mode: 'number' }).default(0).notNull(),
@@ -249,6 +268,9 @@ export const bankMutations = pgTable('bank_mutations', {
 }, (table) => [
   index('idx_bank_mut_conn_status').on(table.connectionId, table.reconciliationStatus),
   check('chk_bank_mut_amount', sql`amount > 0`),
+  check('chk_bank_mut_link_state', sql`matched_transaction_id is null or reconciliation_status in ('matched','created_as_new')`),
+  uniqueIndex('bank_mut_verified_transaction').on(table.matchedTransactionId)
+    .where(sql`reconciliation_status in ('matched','created_as_new')`),
 ]);
 
 export type Profile = typeof profiles.$inferSelect;

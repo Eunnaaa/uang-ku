@@ -93,7 +93,7 @@ export function handleAppError({ code, error, set }: { code: any; error: any; se
         requestId,
       },
     };
-    return Response.json(response, { status: 429 });
+    return Response.json(response, { status: 429, headers: { 'Retry-After': String(set.headers['Retry-After'] || 60) } });
   }
 
   if (errorMessage === ERROR_CODES.FORBIDDEN) {
@@ -108,7 +108,8 @@ export function handleAppError({ code, error, set }: { code: any; error: any; se
   }
 
   // Capture unexpected 500 exceptions in Sentry and structured logger
-  sentry.captureException(error, { requestId, extra: { code } });
+  // Database driver messages may embed bound values, including financial notes and credential hashes.
+  sentry.captureException(new Error('Unhandled API error'), { requestId, extra: { code } });
 
   // Default Internal Server Error
   const response: ApiErrorResponse = {

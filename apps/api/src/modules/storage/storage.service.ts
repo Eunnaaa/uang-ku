@@ -2,7 +2,6 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { env } from '../../config/env';
-import { logger } from '../../utils/logger';
 import {
   ALLOWED_RECEIPT_MIME_TYPES,
   MAX_RECEIPT_FILE_SIZE_BYTES,
@@ -11,28 +10,18 @@ import {
 } from '@uangku/contracts';
 
 export class StorageService {
-  private localUploadDir: string;
+  private localUploadDir = path.resolve(env.STORAGE_LOCAL_DIR, 'receipts');
+  private bucket = env.STORAGE_DRIVER === 'local' ? null : new Bun.S3Client({
+    endpoint: env.S3_ENDPOINT, bucket: env.S3_BUCKET, region: env.S3_REGION,
+    accessKeyId: env.S3_ACCESS_KEY_ID, secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+  });
 
-  constructor() {
-    this.localUploadDir = path.resolve(__dirname, '../../../public/uploads/receipts');
-    // Ensure upload directory exists
-    try {
-      if (!fs.existsSync(this.localUploadDir)) {
-        fs.mkdirSync(this.localUploadDir, { recursive: true });
-      }
-    } catch (err) {
-      logger.warn('Failed to create local upload directory', undefined, err as Error);
-    }
-  }
-
-  /**
-   * Upload receipt buffer to cloud storage (S3/R2/Supabase) or local filesystem fallback
-   */
   public async uploadReceipt(
     buffer: Buffer,
     originalFilename: string,
     mimeType: AllowedReceiptMimeType,
-    userId: string
+    userId: string,
+    origin: string
   ): Promise<UploadReceiptResponse> {
     // 1. Validation checks
     if (!ALLOWED_RECEIPT_MIME_TYPES.includes(mimeType)) {
@@ -53,61 +42,22 @@ export class StorageService {
     };
     const extension = extMap[mimeType] || path.extname(originalFilename) || '.jpg';
     const datePrefix = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const uniqueId = crypto.randomUUID().slice(0, 8);
+    const uniqueId = crypto.randomUUID();
     const parsedName = path.parse(originalFilename).name;
     const sanitizedBase = parsedName.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 25) || 'receipt';
     const filename = `${datePrefix}_${uniqueId}_${sanitizedBase}${extension}`;
     const storageKey = `receipts/${userId}/${filename}`;
 
-    // 3. Cloud S3 / Cloudflare R2 Upload
-    if (
-      env.STORAGE_DRIVER !== 'local' &&
-      env.S3_ENDPOINT &&
-      env.S3_ACCESS_KEY_ID &&
-      env.S3_SECRET_ACCESS_KEY
-    ) {
-      try {
-        const s3Url = `${env.S3_ENDPOINT.replace(/\/$/, '')}/${env.S3_BUCKET}/${storageKey}`;
-        const uploadRes = await fetch(s3Url, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': mimeType,
-            'Content-Length': String(buffer.length),
-            Authorization: `AWS ${env.S3_ACCESS_KEY_ID}:${env.S3_SECRET_ACCESS_KEY}`,
-          },
-          body: new Uint8Array(buffer),
-        });
-
-        if (uploadRes.ok) {
-          const publicPrefix = env.S3_PUBLIC_URL_PREFIX || `${env.S3_ENDPOINT}/${env.S3_BUCKET}`;
-          const fileUrl = `${publicPrefix.replace(/\/$/, '')}/${storageKey}`;
-          logger.info(`Receipt uploaded to Cloud Storage (${env.STORAGE_DRIVER}): ${storageKey}`);
-          return {
-            fileUrl,
-            key: storageKey,
-            filename,
-            mimeType,
-            sizeBytes: buffer.length,
-            uploadedAt: new Date().toISOString(),
-          };
-        }
-      } catch (s3Err) {
-        logger.warn('Remote cloud upload failed, falling back to local storage', undefined, s3Err as Error);
-      }
+    if (this.bucket) {
+      await this.bucket.write(storageKey, buffer, { type: mimeType });
+    } else {
+      const dir = path.join(this.localUploadDir, userId);
+      await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+      await fs.promises.writeFile(path.join(dir, filename), buffer, { flag: 'wx', mode: 0o600 });
     }
-
-    // 4. Local Filesystem Storage Fallback
-    const localFilePath = path.join(this.localUploadDir, filename);
-    await fs.promises.writeFile(localFilePath, buffer);
-
-    const baseUrl = `http://localhost:${env.PORT}`;
-    const fileUrl = `${baseUrl}/api/v1/storage/receipts/${filename}`;
-
-    logger.info(`Receipt saved locally: ${filename} (${buffer.length} bytes)`);
-
     return {
-      fileUrl,
-      key: `local/${filename}`,
+      fileUrl: `${origin}/api/v1/storage/receipts/${filename}`,
+      key: storageKey,
       filename,
       mimeType,
       sizeBytes: buffer.length,
@@ -115,28 +65,78 @@ export class StorageService {
     };
   }
 
-  /**
-   * Get file stream/buffer from local storage
-   */
-  public async getLocalReceipt(filename: string): Promise<{ buffer: Buffer; mimeType: string } | null> {
-    const safeName = path.basename(filename);
-    const filePath = path.join(this.localUploadDir, safeName);
-    if (!fs.existsSync(filePath)) {
-      return null;
+  // Called under the owner's PostgreSQL row lock. Count existing objects, including pre-quota uploads.
+  public async hasRoomForReceipt(userId: string, bytes: number) {
+    let count = 1, total = bytes;
+    const fits = (size: number) => {
+      count++;
+      total += size;
+      return count <= 100 && total <= 100 * 1024 * 1024;
+    };
+    if (this.bucket) {
+      let continuationToken: string | undefined;
+      do {
+        const page = await this.bucket.list({ prefix: `receipts/${userId}/`, continuationToken, maxKeys: 100 });
+        for (const obj of page.contents ?? []) if (obj.size == null || !fits(obj.size)) return false;
+        if (!page.isTruncated) break;
+        if (!page.nextContinuationToken || page.nextContinuationToken === continuationToken) throw new Error('Incomplete receipt inventory');
+        continuationToken = page.nextContinuationToken;
+      } while (continuationToken);
+    } else {
+      const dir = path.join(this.localUploadDir, userId);
+      try {
+        for await (const entry of await fs.promises.opendir(dir)) {
+          if (!entry.isFile() || !fits((await fs.promises.stat(path.join(dir, entry.name))).size)) return false;
+        }
+      } catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err; }
     }
-    const buffer = await fs.promises.readFile(filePath);
-    const ext = path.extname(safeName).toLowerCase();
+    return true;
+  }
+
+  public async getReceipt(userId: string, filename: string) {
+    if (!/^[\w-]+\.[A-Za-z0-9]+$/.test(filename)) return null;
+    const file = this.bucket ? this.bucket.file(`receipts/${userId}/${filename}`) :
+      Bun.file(path.join(this.localUploadDir, userId, filename));
+    if (!await file.exists()) return null;
+    const ext = path.extname(filename).toLowerCase();
     const mimeMap: Record<string, string> = {
       '.jpg': 'image/jpeg',
       '.jpeg': 'image/jpeg',
       '.png': 'image/png',
       '.webp': 'image/webp',
+      '.heic': 'image/heic',
       '.pdf': 'application/pdf',
     };
     return {
-      buffer,
+      buffer: await file.arrayBuffer(),
       mimeType: mimeMap[ext] || 'application/octet-stream',
     };
+  }
+
+  public async deleteReceipts(userId: string) {
+    // Flat legacy uploads have no trusted owner. Never infer one from an editable transaction URL.
+    const legacy = env.STORAGE_LEGACY_DIR || path.resolve(__dirname, '../../../public/uploads/receipts');
+    let files: string[];
+    try { files = await fs.promises.readdir(legacy); }
+    catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      files = [];
+    }
+    if (files.some(name => /^\d{8}_[a-f0-9]{8}_/.test(name))) throw new Error('Legacy receipt ownership must be reconciled first');
+    const prefix = `receipts/${userId}/`;
+    if (this.bucket) {
+      let continuationToken: string | undefined;
+      do {
+        const page = await this.bucket.list({ prefix, continuationToken });
+        for (const obj of page.contents || []) {
+          if (!obj.key?.startsWith(prefix)) throw new Error('Invalid receipt storage key');
+          await this.bucket.delete(obj.key);
+        }
+        if (page.isTruncated && !page.nextContinuationToken) throw new Error('Incomplete receipt listing');
+        continuationToken = page.nextContinuationToken;
+      } while (continuationToken);
+    }
+    await fs.promises.rm(path.join(this.localUploadDir, userId), { recursive: true, force: true });
   }
 }
 
